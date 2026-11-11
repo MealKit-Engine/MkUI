@@ -1,0 +1,1 @@
+mkcontract v0.3.0 (ebceb22) from https://github.com/MealKit-Engine/MealKit-Contract
