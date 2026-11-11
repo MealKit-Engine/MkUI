@@ -6,7 +6,7 @@
 #   MKUI_STB_DIR          folder containing stb_truetype.h (the implementation is compiled here)
 #   MKUI_MKCONTRACT_DIR   mkcontract source folder, used only if no mkcontract target exists yet ("@format ui N" lines)
 cmake_minimum_required(VERSION 3.25)
-project(mkui VERSION 0.4.0 LANGUAGES CXX)
+project(mkui VERSION 0.5.0 LANGUAGES CXX)
 
 if(NOT MKUI_STB_DIR)
     set(MKUI_STB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)

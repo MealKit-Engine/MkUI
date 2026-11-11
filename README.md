@@ -61,12 +61,17 @@ files the game reads as they are.
 
 - **Files** lists `assets/ui` (and its subfolders); **Source** is the text with comments, **Tree** and **Properties** edit
   nodes and property lines through `mkui/Source.h`, so comments and order stay. Unsaved edits show in the preview at once.
+  Properties has rows for the common settings above the raw lines: position, width/height as fixed / fit content / fill,
+  the anchor grid with stretch and scale (`constraints`), children's layout, justify, align, gap, padding, fill and text
+  color, radius, opacity, text content, font size, font and image pickers (`assets/fonts`, `assets/ui`, `assets/textures`)
+  and behaviour (button, toggle, slider, list, scroll, text input with their words). `$token` values show as text.
 - **Preview** draws through `mkui::tessellate` on SDL_Renderer at a chosen resolution, with the project's fonts, images,
   theme (`ui/theme.ui`) and strings (`assets/strings/<language>.txt`). Wheel zooms at the mouse, the middle button (or Space + drag) pans, F fits. A click selects the node under it; dragging moves a node that has a number `pos` (layout children follow their parent), the eight handles resize it (only the dragged axes become numbers), Shift snaps to 10 units, one drag is one undo step. With
   **Interact** on, buttons, sliders and inputs work and their actions are listed in **Problems**. Orange boxes are cut text.
 - **Library** adds ready-made widgets (panel, text, image, button, toggle, slider, progress bar, text input, list, scroll
   area: the same set as the MealKit editor) and the project's components (`use` nodes) into the selected container or
-  after the selection. **Make component** moves a selected frame into `ui/components/<name>.ui` and leaves a `use`;
+  after the selection, or where they are dropped on the preview (into the deepest container under the mouse, at the
+  mouse when its children are free). **Make component** moves a selected frame into `ui/components/<name>.ui` and leaves a `use`;
   **Edit component** opens the file behind a `use`. **New screen** writes `ui/<name>.ui` with an empty 1920×1080 board.
 - **Values** fills the screen with fake view-model values (a `mkui::ValueModel` bound to it): the fields come from the
   screen itself (bindings, `{field}` in texts, widget fields) with a guessed kind, fields under a list belong to its rows,

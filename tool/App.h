@@ -88,7 +88,11 @@ private:
     void drawTree();
     void drawLibrary();
     void drawNameDialog();
-    void insertNode(SourceNode node); // into the selected container, else after the selection, else at the end of the board
+    // parent null: into the selected container, else after the selection, else at the end of the board.
+    // parent given: last child of it, at pos (logical, inside parent) when its children are free
+    void insertNode(SourceNode node, const Path* parent = nullptr, const float* pos = nullptr);
+    void dropNode(SourceNode node, float lx, float ly); // library item dropped on the preview at board point lx, ly
+    bool drawInspector(SourceNode& node);               // true if it changed node
     bool makeComponent(const std::string& name);
     bool newScreen(const std::string& name);
     void drawTreeNode(const SourceNode& node, Path& path);
@@ -156,6 +160,9 @@ private:
     Path m_selected;
     bool m_hasSelection = false;
     char m_newProperty[128] = {};
+    bool m_inspectorActive = false;                      // an inspector edit is under way (its undo step is pushed)
+    std::vector<std::string> m_imageFiles, m_fontFiles; // pickers: assets/ui + assets/textures pictures, assets/fonts
+    double m_assetListTime = -10.0;
     int m_nameDialog = 0; // 1 new screen, 2 make component (popup asking for a name)
     char m_nameInput[64] = {};
 
