@@ -19,7 +19,7 @@ target_include_directories(mkui_imgui PUBLIC ${imgui_dir} ${imgui_dir}/backends)
 target_link_libraries(mkui_imgui PUBLIC SDL3::SDL3-static)
 
 add_executable(MkUI WIN32 main.cpp App.h App.cpp)
-target_link_libraries(MkUI PRIVATE mkui mkui_imgui SDL3::SDL3-static)
+target_link_libraries(MkUI PRIVATE mkui mkui_imgui mkcontract_client SDL3::SDL3-static) # mkcontract_client: live connection to running games
 if(MSVC)
     target_compile_options(MkUI PRIVATE /W4 /permissive- /utf-8)
 else()

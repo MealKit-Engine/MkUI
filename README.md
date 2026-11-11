@@ -72,11 +72,14 @@ files the game reads as they are.
   screen itself (bindings, `{field}` in texts, widget fields) with a guessed kind, fields under a list belong to its rows,
   and the row count is a slider. Defaults: bools on, numbers 0.6, texts the field's name, lists 3 rows. Kept in
   `<project>/art/ui/samples/<screen>.values` (not shipped); "Use these values" off shows the screen unbound.
+- **From a running game** (bottom of Values): a game or editor of the same project started with the live connection
+  (MealKit dev builds, engine `ui/` service) is listed with its open screens; **Take values** copies the view model it has
+  bound to this screen, **Follow** keeps copying twice a second. Saved `.ui` files reload in the running game by themselves.
 - A file changed on disk reloads by itself when there are no edits. Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
-- Next (taking over the MealKit editor's UI workspace): real values from the editor and reload in running games over the live connection, the Penpot plugin.
+- Next (taking over the MealKit editor's UI workspace): the editor's inspector rows and canvas drop, then the editor's UI workspace goes; the Penpot plugin.
 
 ```
-MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--resolution 0-4] [--frames N --capture shot.png]
+MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--show Values] [--follow] [--resolution 0-4] [--frames N --capture shot.png]
 ```
 
 The preview is close to the engine's SDF look but not the same (linear shadow falloff, image brightness not applied, a

@@ -1,5 +1,5 @@
 // MkUI Designer executable: SDL3 window + SDL_Renderer + Dear ImGui (docking). The actual screen is App.
-//   MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--resolution N] [--frames N --capture <png>]
+//   MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--show Values] [--follow] [--resolution N] [--frames N --capture <png>]
 #include "App.h"
 
 #include <SDL3/SDL.h>
@@ -47,7 +47,8 @@ void loadFont(float size) {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string project, file, capture, select;
+    std::string project, file, capture, select, show;
+    bool follow = false;
     float zoom = 1.0f;
     long frames = 0;
     int resolution = 0;
@@ -56,6 +57,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--file") == 0 && i + 1 < argc) file = argv[++i];
         else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = std::strtol(argv[++i], nullptr, 10);
         else if (std::strcmp(argv[i], "--capture") == 0 && i + 1 < argc) capture = argv[++i];
+        else if (std::strcmp(argv[i], "--show") == 0 && i + 1 < argc) show = argv[++i];
+        else if (std::strcmp(argv[i], "--follow") == 0) follow = true;
         else if (std::strcmp(argv[i], "--select") == 0 && i + 1 < argc) select = argv[++i];
         else if (std::strcmp(argv[i], "--zoom") == 0 && i + 1 < argc) zoom = std::strtof(argv[++i], nullptr);
         else if (std::strcmp(argv[i], "--resolution") == 0 && i + 1 < argc) resolution = std::atoi(argv[++i]);
@@ -104,6 +107,8 @@ int main(int argc, char** argv) {
     app.init(renderer, project, file, resolution);
     if (!select.empty() && !app.selectByName(select)) SDL_Log("No node named %s", select.c_str());
     if (zoom > 0.0f) app.setZoom(zoom);
+    if (!show.empty()) app.showWindow(show);
+    if (follow) app.followFirstGame();
 
     Uint64 last = SDL_GetPerformanceCounter();
     std::string shownTitle;

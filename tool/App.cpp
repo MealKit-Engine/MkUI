@@ -413,6 +413,10 @@ void App::frame(double dt) {
     }
     drawUnsavedDialog();
     drawNameDialog();
+    if (!m_showWindow.empty()) {
+        ImGui::SetWindowFocus(m_showWindow.c_str());
+        m_showWindow.clear();
+    }
 }
 
 void App::layoutDocks(unsigned dockspace) {
@@ -1168,7 +1172,104 @@ void App::drawValues() {
     }
     if (changed) buildModel();
     if (commit) saveValues();
+    drawLive();
     ImGui::End();
+}
+
+// ---------------------------------------------------------------- Live connection (real view-model values)
+
+// A running game or editor of this project (MealKit tool contract) answers ui/screens and ui/values?screen=<path> with the
+// view model bound to that screen as "path value" pairs. Its arrays are fixed slots; a "<list>Count" field says how many are used
+bool App::takeLiveValues(const mkcontract::live::Instance& from, bool quiet) {
+    const mkcontract::live::HttpResult r = mkcontract::live::request(from, "GET", "ui/values?screen=" + mkcontract::live::urlEncode(m_file), {}, 250);
+    mkcontract::Json json;
+    if (r.status != 200 || !mkcontract::Json::parse(r.body, json) || !json["ok"].flag()) {
+        if (!quiet) {
+            mkcontract::Json err;
+            m_liveStatus = r.status == 0 ? "No answer" : mkcontract::Json::parse(r.body, err) ? err["error"].str("error") : "Bad answer";
+        }
+        return false;
+    }
+    std::map<std::string, std::string> got;
+    for (const mkcontract::Json& pair : json["values"].array)
+        if (pair.array.size() == 2) got[pair.array[0].str()] = pair.array[1].str();
+    for (const FakeField& f : m_fields) {
+        if (f.kind != ValueKind::Array) continue;
+        if (!f.list.empty()) continue; // lists inside rows: not yet
+        const std::string& full = f.path;
+        auto count = got.find(full + "Count");
+        int rows = 0;
+        if (count != got.end()) rows = std::atoi(count->second.c_str());
+        else
+            for (const auto& [key, v] : got)
+                if (key.rfind(full + "[", 0) == 0) rows = std::max(rows, std::atoi(key.c_str() + full.size() + 1) + 1);
+        got[full] = std::to_string(rows);
+    }
+    for (const auto& [key, v] : got) m_values[key] = v;
+    buildModel();
+    if (!quiet) {
+        saveValues();
+        m_liveStatus = "Took " + std::to_string(got.size()) + " values of " + json["model"].str("?");
+    }
+    return true;
+}
+
+void App::drawLive() {
+    if (m_project.empty()) return;
+    // The list of running games/editors, and what each has open, every two seconds
+    if (m_time - m_liveCheck > 2.0) {
+        m_liveCheck = m_time;
+        std::vector<mkcontract::live::Instance> found = mkcontract::live::findInstances(m_project);
+        const int followPid = m_follow >= 0 && m_follow < static_cast<int>(m_live.size()) ? static_cast<int>(m_live[m_follow].pid) : -1;
+        m_live = std::move(found);
+        m_follow = -1;
+        m_liveScreens.assign(m_live.size(), std::string());
+        for (size_t i = 0; i < m_live.size(); ++i) {
+            if (static_cast<int>(m_live[i].pid) == followPid) m_follow = static_cast<int>(i);
+            const mkcontract::live::HttpResult r = mkcontract::live::request(m_live[i], "GET", "ui/screens", {}, 150);
+            mkcontract::Json json;
+            if (r.status == 503) m_liveScreens[i] = "not playing";
+            else if (r.status != 200 || !mkcontract::Json::parse(r.body, json)) m_liveScreens[i] = "no ui/ service (older engine?)";
+            else
+                for (const mkcontract::Json& sc : json["screens"].array) {
+                    const std::string model = sc["model"].str();
+                    m_liveScreens[i] += (m_liveScreens[i].empty() ? "" : ", ") + sc["path"].str() + (model.empty() ? "" : " (" + model + ")");
+                }
+        }
+    }
+    if (m_followFirst && !m_live.empty() && !m_file.empty()) {
+        m_followFirst = false;
+        m_follow = 0;
+        m_liveStatus = "Following (values update twice a second)";
+    }
+    if (m_follow >= 0 && m_follow < static_cast<int>(m_live.size()) && m_time - m_followTime > 0.5) {
+        m_followTime = m_time;
+        if (!takeLiveValues(m_live[m_follow], true)) m_follow = -1, m_liveStatus = "Follow stopped: the screen isn't open there";
+    }
+
+    ImGui::SeparatorText("From a running game");
+    if (m_live.empty()) {
+        ImGui::TextDisabled("None running for this project. Start the game or press Play in the editor;");
+        ImGui::TextDisabled("saved .ui files reload there by themselves.");
+        return;
+    }
+    for (size_t i = 0; i < m_live.size(); ++i) {
+        const mkcontract::live::Instance& in = m_live[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::Text("%s %u", in.kind.c_str(), in.pid);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Take values")) takeLiveValues(in, false);
+        ImGui::SetItemTooltip("Copies the view model this game has bound to %s into these values", m_file.c_str());
+        ImGui::SameLine();
+        bool follow = m_follow == static_cast<int>(i);
+        if (ImGui::Checkbox("Follow", &follow)) {
+            m_follow = follow ? static_cast<int>(i) : -1;
+            m_liveStatus = follow ? "Following (values update twice a second)" : "";
+        }
+        ImGui::TextDisabled("  open: %s", m_liveScreens[i].empty() ? "no screens" : m_liveScreens[i].c_str());
+        ImGui::PopID();
+    }
+    if (!m_liveStatus.empty()) ImGui::TextWrapped("%s", m_liveStatus.c_str());
 }
 
 // ---------------------------------------------------------------- Preview

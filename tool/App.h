@@ -7,6 +7,9 @@
 #include "mkui/Ui.h"
 #include "mkui/Values.h"
 
+#include <mkcontract/Client.h>
+#include <mkcontract/Json.h>
+
 #include <deque>
 #include <filesystem>
 #include <map>
@@ -59,6 +62,8 @@ public:
     void setPendingProject(const std::string& dir); // from the folder dialog thread
     bool selectByName(const std::string& name);     // first node with this name (command line --select)
     void setZoom(float zoom) { m_zoom = zoom; }
+    void showWindow(const std::string& name) { m_showWindow = name; } // brings a docked tab forward on the next frame
+    void followFirstGame() { m_followFirst = true; }                 // follow the first running game found (--follow)
     void* window = nullptr;                          // SDL_Window* (dialog parent)
 
 private:
@@ -91,6 +96,8 @@ private:
     void drawText();
     void drawProblems();
     void drawValues();
+    void drawLive();
+    bool takeLiveValues(const mkcontract::live::Instance& from, bool quiet); // the game's view model of this screen → m_values
     void collectFields(); // after each parse: the screen's bound fields; rebuilds the model when they change
     void buildModel();
     void loadValues();
@@ -123,6 +130,13 @@ private:
     std::vector<FakeField> m_fields;
     std::map<std::string, std::string> m_values; // "score" = "12", "items" = "3", "items[0].name" = "Ann"
     bool m_valuesOn = true;
+    std::vector<mkcontract::live::Instance> m_live; // running games/editors of this project
+    std::vector<std::string> m_liveScreens;         // per instance: its open screens ("ui/hud.ui (HudVm)")
+    double m_liveCheck = -10.0, m_followTime = 0.0;
+    int m_follow = -1; // instance whose values are taken every half second
+    std::string m_liveStatus;
+    std::string m_showWindow;
+    bool m_followFirst = false;
 
     std::string m_project; // UTF-8
     std::vector<std::string> m_files; // "ui/menu.ui", "ui/components/x.ui"
