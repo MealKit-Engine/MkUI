@@ -54,18 +54,39 @@ Engines with their own reflection implement `mkui::Binder` instead (MealKit bind
 
 `mkui/Source.h` edits `.ui` text while keeping comments and order (what an editor uses).
 
+## MkUI Designer
+
+`tool/` builds the **MkUI** program (SDL3 + Dear ImGui), which edits a project's `assets/ui/*.ui` without an engine: the
+files the game reads as they are.
+
+- **Files** lists `assets/ui` (and its subfolders); **Source** is the text with comments, **Tree** and **Properties** edit
+  nodes and property lines through `mkui/Source.h`, so comments and order stay. Unsaved edits show in the preview at once.
+- **Preview** draws through `mkui::tessellate` on SDL_Renderer at a chosen resolution, with the project's fonts, images,
+  theme (`ui/theme.ui`) and strings (`assets/strings/<language>.txt`). A click selects the node under it; with
+  **Interact** on, buttons, sliders and inputs work and their actions are listed in **Problems**. Orange boxes are cut text.
+- A file changed on disk reloads by itself when there are no edits. Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
+- Next: fake view-model values (`ValueModel`), telling running games to reload, the Penpot plugin.
+
+```
+MkUI [--project <project folder>] [--file ui/menu.ui] [--resolution 0-4] [--frames N --capture shot.png]
+```
+
+The preview is close to the engine's SDF look but not the same (linear shadow falloff, image brightness not applied, a
+fixed glyph edge). The MealKit editor lists the program in its **Tools** menu when `MkUI` and `mealkit-tool.txt` (both in
+`build/bin`) are in `%LOCALAPPDATA%\MealKit\tools\ui\`, or with `--tool-path build/bin`. `-DMKUI_BUILD_TOOL=OFF` skips it.
+
 ## Build
 
 ```
 cmake -S . -B build && cmake --build build && ctest --test-dir build
 ```
 
-Added to another project with `add_subdirectory`, only the library is built. `MKUI_STB_DIR` and `MKUI_MKCONTRACT_DIR`
+Added to another project with `add_subdirectory`, only the library is built (no tests, no Designer). `MKUI_STB_DIR` and `MKUI_MKCONTRACT_DIR`
 point to the including side's copies (defaults: `third_party/`). If an `mkcontract` target already exists it is used.
 
 ## Planned (MealKit ROADMAP "UI 2")
 
 A XAML-like layer: data binding (one-way/two-way, converters), styles and control templates, triggers and state
-animations, resource dictionaries. Own format; no `.xaml` compatibility is promised. The Penpot plugin moves here too.
+animations, resource dictionaries. Own format; no `.xaml` compatibility is promised. The Penpot plugin moves here too, next to the Designer.
 
-Third-party code in `third_party/`: stb_truetype (public domain / MIT), mkcontract (MIT).
+Third-party code in `third_party/`: stb_truetype (public domain / MIT), mkcontract (MIT); for the Designer only, SDL 3.4.18 (Zlib) and Dear ImGui v1.92.9b-docking (MIT).

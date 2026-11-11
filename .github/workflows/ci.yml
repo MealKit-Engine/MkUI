@@ -29,9 +29,11 @@ jobs:
           # vcvars64 into the job environment (replaces ilammy/msvc-dev-cmd, which still runs on Node 20)
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | Where-Object { $_ -match '^[^=]+=' } | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Linux packages
+      - name: Linux packages (SDL3 window for the Designer)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libdbus-1-dev libudev-dev
       - name: macOS packages
         if: runner.os == 'macOS'
         run: brew install ninja
@@ -40,7 +42,7 @@ jobs:
         run: |
           if [ -n "${{ matrix.cc }}" ]; then export CC=${{ matrix.cc }} CXX=${{ matrix.cxx }}; fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build (runtime, tests)
+      - name: Build (runtime, tests, Designer)
         run: cmake --build build
       - name: Test (no GPU)
         run: ctest --test-dir build --output-on-failure
