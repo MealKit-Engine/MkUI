@@ -275,6 +275,7 @@ bool App::openFile(const std::string& uiPath) {
     m_hasSelection = false;
     m_actions.clear();
     m_screen = m_ui->open(uiPath);
+    loadValues();
     textChanged();
     return true;
 }
@@ -333,6 +334,7 @@ void App::textChanged() {
     m_docPaths = m_sourceError.empty() ? mapDocumentNodes(m_source, m_doc) : std::vector<Path>{};
     if (m_hasSelection && !findNode(m_source, m_selected)) m_hasSelection = false;
     if (m_screen != kNoScreen) m_ui->setDraft(m_screen, m_text == m_savedText ? nullptr : &m_text);
+    collectFields();
 }
 
 void App::snapshot() {
@@ -406,6 +408,7 @@ void App::frame(double dt) {
         drawProperties();
         drawText();
         drawProblems();
+        drawValues();
         drawPreview(dt);
     }
     drawUnsavedDialog();
@@ -427,6 +430,7 @@ void App::layoutDocks(unsigned dockspace) {
     ImGui::DockBuilderDockWindow("Library", left);
     ImGui::DockBuilderDockWindow("Tree", leftBottom);
     ImGui::DockBuilderDockWindow("Properties", right);
+    ImGui::DockBuilderDockWindow("Values", right);
     ImGui::DockBuilderDockWindow("Source", rightBottom);
     ImGui::DockBuilderDockWindow("Problems", bottom);
     ImGui::DockBuilderDockWindow("Preview", center);
@@ -461,6 +465,7 @@ void App::drawMenu() {
                         m_language = l;
                         m_host.loadStrings(l);
                         m_ui->reload();
+                        textChanged(); // {field} in the new language's texts
                     }
                 ImGui::EndCombo();
             }
@@ -914,6 +919,256 @@ void App::drawNameDialog() {
     ImGui::SameLine();
     if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+}
+
+// ---------------------------------------------------------------- Fake view-model values
+
+// The screen has no view model type here, so the fields come from the screen itself: every binding, {field} in texts and
+// widget fields, with a kind guessed from where it's used. Fields under a list node belong to its rows (the runtime gives each
+// row its own model). Values live in <project>/art/ui/samples/<screen>.values ("key = value" lines, not shipped)
+
+namespace {
+
+void addField(std::vector<App::FakeField>& out, std::string path, const std::string& list, ValueKind kind) {
+    if (!path.empty() && path[0] == '!') path.erase(0, 1);
+    if (path.empty() || path == "option") return;
+    for (App::FakeField& f : out)
+        if (f.path == path && f.list == list) {
+            if (f.kind == ValueKind::String && kind != ValueKind::String) f.kind = kind; // a widget or binding says more than a text
+            return;
+        }
+    out.push_back({path, list, kind});
+}
+
+void textFields(std::vector<App::FakeField>& out, const std::string& text, const std::string& list) {
+    for (size_t i = 0; (i = text.find('{', i)) != std::string::npos; ++i) {
+        const size_t close = text.find('}', i + 1);
+        if (close == std::string::npos) break;
+        std::string name = text.substr(i + 1, close - i - 1);
+        name = name.substr(0, name.find(':'));
+        if (!name.empty() && name.find(' ') == std::string::npos) addField(out, name, list, ValueKind::String);
+        i = close;
+    }
+}
+
+std::string defaultValue(const App::FakeField& f) {
+    switch (f.kind) {
+    case ValueKind::Bool: return "true";
+    case ValueKind::Float: return "0.6";
+    case ValueKind::Int: return "0";
+    case ValueKind::Color: return "#3B6FE0FF";
+    case ValueKind::Array: return "3";
+    default: {
+        const size_t dot = f.path.rfind('.');
+        return f.path.substr(dot == std::string::npos ? 0 : dot + 1); // the field's own name reads well in a layout
+    }
+    }
+}
+
+ValueModel& childAt(ValueModel& m, const std::string& path, std::string& leaf) {
+    ValueModel* cur = &m;
+    size_t a = 0;
+    for (size_t dot; (dot = path.find('.', a)) != std::string::npos; a = dot + 1) cur = &cur->child(path.substr(a, dot - a));
+    leaf = path.substr(a);
+    return *cur;
+}
+
+u32 parseColor(const std::string& s) {
+    std::string hex = s[0] == '#' ? s.substr(1) : s;
+    if (hex.size() == 6) hex += "FF";
+    const u32 v = static_cast<u32>(std::strtoul(hex.c_str(), nullptr, 16)); // RRGGBBAA → rgba() order
+    return rgba(static_cast<u8>(v >> 24), static_cast<u8>(v >> 16), static_cast<u8>(v >> 8), static_cast<u8>(v));
+}
+
+void setValue(ValueModel& m, const std::string& path, ValueKind kind, const std::string& value) {
+    std::string leaf;
+    ValueModel& at = childAt(m, path, leaf);
+    switch (kind) {
+    case ValueKind::Bool: at.set(leaf, value == "true" || value == "1"); break;
+    case ValueKind::Float: at.set(leaf, static_cast<f32>(std::atof(value.c_str()))); break;
+    case ValueKind::Int: at.set(leaf, static_cast<i32>(std::atoi(value.c_str()))); break;
+    case ValueKind::Color: at.setColor(leaf, parseColor(value.empty() ? "#FFFFFFFF" : value)); break;
+    default: at.set(leaf, value); break;
+    }
+}
+
+} // namespace
+
+std::string App::valueKey(const FakeField& f, int row) const {
+    return f.list.empty() ? f.path : f.list + "[" + std::to_string(row) + "]." + f.path;
+}
+
+const std::string& App::value(const std::string& key, const FakeField& f) {
+    auto it = m_values.find(key);
+    if (it == m_values.end()) it = m_values.emplace(key, defaultValue(f)).first;
+    return it->second;
+}
+
+void App::collectFields() {
+    std::vector<FakeField> fields;
+    for (size_t i = 0; i < m_doc.nodes.size(); ++i) {
+        const Node& n = m_doc.nodes[i];
+        std::string list; // the nearest list above (its rows hold this node's fields)
+        for (i32 p = n.parent; p >= 0; p = m_doc.nodes[static_cast<size_t>(p)].parent)
+            if (m_doc.nodes[static_cast<size_t>(p)].widget == WidgetKind::List) {
+                list = m_doc.nodes[static_cast<size_t>(p)].field;
+                break;
+            }
+        for (const std::string* f : {&n.visibleField, &n.disabledField}) addField(fields, *f, list, ValueKind::Bool);
+        for (const std::string* f : {&n.widthRatioField, &n.scaleField, &n.offsetXField, &n.offsetYField, &n.opacityField, &n.brightnessField,
+                                     &n.fontSizeField})
+            addField(fields, *f, list, ValueKind::Float);
+        addField(fields, n.colorField, list, ValueKind::Color);
+        addField(fields, n.imageField, list, ValueKind::String);
+        switch (n.widget) {
+        case WidgetKind::Toggle: addField(fields, n.field, list, ValueKind::Bool); break;
+        case WidgetKind::Slider: addField(fields, n.field, list, ValueKind::Float); break;
+        case WidgetKind::Select: addField(fields, n.field, list, ValueKind::Int); break;
+        case WidgetKind::TextInput: addField(fields, n.field, list, ValueKind::String); break;
+        case WidgetKind::List: addField(fields, n.field, list, ValueKind::Array); break;
+        default: break;
+        }
+        textFields(fields, !n.textKey.empty() ? m_host.text(n.textKey) : n.textContent, list);
+    }
+    const bool changed = fields.size() != m_fields.size() ||
+                         !std::equal(fields.begin(), fields.end(), m_fields.begin(), [](const FakeField& a, const FakeField& b) {
+                             return a.path == b.path && a.list == b.list && a.kind == b.kind;
+                         });
+    if (!changed) return;
+    m_fields = std::move(fields);
+    buildModel();
+}
+
+void App::buildModel() {
+    m_model = ValueModel{};
+    for (const FakeField& f : m_fields) {
+        if (!f.list.empty()) continue;
+        if (f.kind == ValueKind::Array) {
+            const int rows = std::clamp(std::atoi(value(f.path, f).c_str()), 0, 50);
+            std::string leaf;
+            std::vector<ValueModel>& items = childAt(m_model, f.path, leaf).list(leaf);
+            items.resize(static_cast<size_t>(rows));
+            for (int r = 0; r < rows; ++r)
+                for (const FakeField& c : m_fields)
+                    if (c.list == f.path && c.kind != ValueKind::Array) setValue(items[static_cast<size_t>(r)], c.path, c.kind, value(valueKey(c, r), c));
+            continue;
+        }
+        setValue(m_model, f.path, f.kind, value(f.path, f));
+    }
+    if (m_screen != kNoScreen) m_ui->bind(m_screen, m_valuesOn ? m_model.model() : Model{});
+}
+
+std::filesystem::path App::valuesPath() const {
+    if (m_file.empty()) return {};
+    std::string stem = m_file.substr(3); // without "ui/"
+    stem = stem.substr(0, stem.size() - 3);
+    std::replace(stem.begin(), stem.end(), '/', '_');
+    return pathOf(m_project) / "art" / "ui" / "samples" / pathOf(stem + ".values");
+}
+
+void App::loadValues() {
+    m_values.clear();
+    m_fields.clear();
+    std::string text;
+    if (readText(valuesPath(), text)) {
+        std::istringstream in(text);
+        for (std::string line; std::getline(in, line);) {
+            line = trim(line);
+            if (line.empty() || line[0] == '#' || line[0] == '@') continue;
+            const size_t eq = line.find(" = ");
+            if (eq != std::string::npos) m_values[line.substr(0, eq)] = line.substr(eq + 3);
+        }
+    }
+}
+
+void App::saveValues() {
+    const std::filesystem::path p = valuesPath();
+    if (p.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(p.parent_path(), ec);
+    std::ofstream out(p, std::ios::binary);
+    out << "# Preview values for MkUI Designer (" << m_file << "), not shipped\n";
+    for (const auto& [key, v] : m_values) out << key << " = " << v << "\n";
+}
+
+void App::drawValues() {
+    ImGui::Begin("Values");
+    if (m_file.empty()) {
+        ImGui::TextDisabled("Open a file");
+        ImGui::End();
+        return;
+    }
+    if (ImGui::Checkbox("Use these values", &m_valuesOn)) buildModel();
+    ImGui::SetItemTooltip("Off: the screen as the game shows it with no view model bound");
+    if (m_fields.empty()) ImGui::TextDisabled("This screen binds no fields");
+    ImGui::TextDisabled("Saved in art/ui/samples/ (not shipped)");
+    ImGui::Separator();
+    bool changed = false, commit = false;
+    auto edit = [&](const FakeField& f, const std::string& key, const char* label) {
+        std::string& v = m_values[key];
+        if (v.empty() && f.kind != ValueKind::String) v = defaultValue(f);
+        ImGui::PushID(key.c_str());
+        ImGui::SetNextItemWidth(-ImGui::GetContentRegionAvail().x * 0.45f);
+        switch (f.kind) {
+        case ValueKind::Bool: {
+            bool b = v == "true";
+            if (ImGui::Checkbox(label, &b)) v = b ? "true" : "false", changed = commit = true;
+            break;
+        }
+        case ValueKind::Float: {
+            float x = static_cast<float>(std::atof(v.c_str()));
+            if (ImGui::DragFloat(label, &x, 0.01f)) {
+                char buf[32];
+                std::snprintf(buf, sizeof buf, "%g", x);
+                v = buf, changed = true;
+            }
+            commit |= ImGui::IsItemDeactivatedAfterEdit();
+            break;
+        }
+        case ValueKind::Int:
+        case ValueKind::Array: {
+            int x = std::atoi(v.c_str());
+            if (f.kind == ValueKind::Array ? ImGui::SliderInt(label, &x, 0, 20, "%d rows") : ImGui::InputInt(label, &x)) v = std::to_string(x), changed = true;
+            commit |= ImGui::IsItemDeactivatedAfterEdit();
+            break;
+        }
+        case ValueKind::Color: {
+            const u32 c = parseColor(v.empty() ? "#FFFFFFFF" : v);
+            float rgba4[4] = {(c & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f, ((c >> 16) & 0xFF) / 255.0f, (c >> 24) / 255.0f};
+            if (ImGui::ColorEdit4(label, rgba4, ImGuiColorEditFlags_AlphaBar)) {
+                char buf[16];
+                std::snprintf(buf, sizeof buf, "#%02X%02X%02X%02X", static_cast<int>(rgba4[0] * 255 + 0.5f), static_cast<int>(rgba4[1] * 255 + 0.5f),
+                              static_cast<int>(rgba4[2] * 255 + 0.5f), static_cast<int>(rgba4[3] * 255 + 0.5f));
+                v = buf, changed = true;
+            }
+            commit |= ImGui::IsItemDeactivatedAfterEdit();
+            break;
+        }
+        default:
+            if (inputLine(label, v)) changed = true;
+            commit |= ImGui::IsItemDeactivatedAfterEdit();
+            break;
+        }
+        ImGui::PopID();
+    };
+    for (const FakeField& f : m_fields) {
+        if (!f.list.empty()) continue;
+        edit(f, f.path, f.path.c_str());
+        if (f.kind != ValueKind::Array) continue;
+        const int rows = std::clamp(std::atoi(m_values[f.path].c_str()), 0, 50);
+        ImGui::Indent();
+        for (int r = 0; r < rows; ++r) {
+            const std::string row = f.path + "[" + std::to_string(r) + "]";
+            if (!ImGui::TreeNodeEx(row.c_str(), r == 0 ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
+            for (const FakeField& c : m_fields)
+                if (c.list == f.path && c.kind != ValueKind::Array) edit(c, valueKey(c, r), c.path.c_str());
+            ImGui::TreePop();
+        }
+        ImGui::Unindent();
+    }
+    if (changed) buildModel();
+    if (commit) saveValues();
+    ImGui::End();
 }
 
 // ---------------------------------------------------------------- Preview

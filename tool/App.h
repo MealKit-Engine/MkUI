@@ -45,6 +45,11 @@ public:
 
 class App {
 public:
+    struct FakeField {   // a view-model field the open screen uses
+        std::string path; // "score", "stats.hp"; relative to the row for fields under a list
+        std::string list; // the list field whose rows hold it (empty: the screen's model)
+        ValueKind kind;
+    };
     bool init(SDL_Renderer* renderer, const std::string& projectDir, const std::string& file, int resolution);
     void shutdown();
     void frame(double dt); // between ImGui NewFrame and Render
@@ -85,6 +90,14 @@ private:
     void drawProperties();
     void drawText();
     void drawProblems();
+    void drawValues();
+    void collectFields(); // after each parse: the screen's bound fields; rebuilds the model when they change
+    void buildModel();
+    void loadValues();
+    void saveValues();
+    std::filesystem::path valuesPath() const;
+    std::string valueKey(const FakeField& f, int row) const;
+    const std::string& value(const std::string& key, const FakeField& f); // stored or default
     void drawUnsavedDialog();
     void layoutDocks(unsigned dockspace);
 
@@ -106,7 +119,10 @@ private:
     std::unique_ptr<System> m_ui;
     ScreenId m_screen{};
     DrawList m_list;
-    ValueModel m_model; // empty for now: fake view-model values come later (ROADMAP "UI 2a")
+    ValueModel m_model; // fake view model built from m_fields and m_values
+    std::vector<FakeField> m_fields;
+    std::map<std::string, std::string> m_values; // "score" = "12", "items" = "3", "items[0].name" = "Ann"
+    bool m_valuesOn = true;
 
     std::string m_project; // UTF-8
     std::vector<std::string> m_files; // "ui/menu.ui", "ui/components/x.ui"

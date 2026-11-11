@@ -68,8 +68,12 @@ files the game reads as they are.
   area: the same set as the MealKit editor) and the project's components (`use` nodes) into the selected container or
   after the selection. **Make component** moves a selected frame into `ui/components/<name>.ui` and leaves a `use`;
   **Edit component** opens the file behind a `use`. **New screen** writes `ui/<name>.ui` with an empty 1920×1080 board.
+- **Values** fills the screen with fake view-model values (a `mkui::ValueModel` bound to it): the fields come from the
+  screen itself (bindings, `{field}` in texts, widget fields) with a guessed kind, fields under a list belong to its rows,
+  and the row count is a slider. Defaults: bools on, numbers 0.6, texts the field's name, lists 3 rows. Kept in
+  `<project>/art/ui/samples/<screen>.values` (not shipped); "Use these values" off shows the screen unbound.
 - A file changed on disk reloads by itself when there are no edits. Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
-- Next (taking over the MealKit editor's UI workspace): fake view-model values (`ValueModel`), real values from the editor and reload in running games over the live connection, the Penpot plugin.
+- Next (taking over the MealKit editor's UI workspace): real values from the editor and reload in running games over the live connection, the Penpot plugin.
 
 ```
 MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--resolution 0-4] [--frames N --capture shot.png]
