@@ -6,7 +6,7 @@
 #   MKUI_STB_DIR          folder containing stb_truetype.h (the implementation is compiled here)
 #   MKUI_MKCONTRACT_DIR   mkcontract source folder, used only if no mkcontract target exists yet ("@format ui N" lines)
 cmake_minimum_required(VERSION 3.25)
-project(mkui VERSION 0.1.0 LANGUAGES CXX)
+project(mkui VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT MKUI_STB_DIR)
     set(MKUI_STB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
@@ -28,11 +28,15 @@ add_library(mkui STATIC
     include/mkui/Atlas.h
     include/mkui/Text.h
     include/mkui/Ui.h
+    include/mkui/Draw.h
+    include/mkui/Values.h
     src/Document.cpp
     src/Source.cpp
     src/Atlas.cpp
     src/Text.cpp
     src/Ui.cpp
+    src/Draw.cpp
+    src/Values.cpp
     src/StbTruetype.cpp)
 target_include_directories(mkui PUBLIC include)
 target_include_directories(mkui SYSTEM PRIVATE ${MKUI_STB_DIR})
@@ -41,7 +45,7 @@ target_compile_features(mkui PUBLIC cxx_std_20)
 target_compile_definitions(mkui PUBLIC MKUI_VERSION="${PROJECT_VERSION}")
 if(MSVC)
     target_compile_options(mkui PRIVATE /permissive- /utf-8 /Zc:__cplusplus)
-    set_source_files_properties(src/Document.cpp src/Source.cpp src/Atlas.cpp src/Text.cpp src/Ui.cpp PROPERTIES COMPILE_OPTIONS "/W4")
+    set_source_files_properties(src/Document.cpp src/Source.cpp src/Atlas.cpp src/Text.cpp src/Ui.cpp src/Draw.cpp src/Values.cpp PROPERTIES COMPILE_OPTIONS "/W4")
     set_source_files_properties(src/StbTruetype.cpp PROPERTIES COMPILE_OPTIONS "/W0") # external library implementation
 else()
     target_compile_options(mkui PRIVATE -Wall -Wextra)

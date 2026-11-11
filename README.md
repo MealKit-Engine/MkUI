@@ -23,6 +23,35 @@ for (const mkui::Action& a : ui.actions()) { /* "menu.start" ... */ }
 draw(ui.render());
 ```
 
+## Drawing
+
+Two ways (`mkui/Draw.h`):
+
+- **SDF quads** (what MealKit does): one instanced draw of 6 vertices per `mkui::Quad` with the reference shader
+  `shaders/mkui_quad.hlsl` (HLSL; DXC also compiles it to SPIR-V). Per-pixel rounded corners, borders, gradients, blurred
+  shadows and SDF text.
+- **Triangles** for any 2D renderer: `mkui::tessellate(ui.render(), list)` gives vertices (position, atlas uv, straight-alpha
+  RGBA8), u32 indices and commands per texture (none, glyph SDF atlas, image atlas) and clip rect. Blend SrcAlpha /
+  OneMinusSrcAlpha; for glyph commands take alpha = smoothstep around 0.5 of the atlas value (or an alpha test at 0.5).
+  Edges are feathered over one pixel; shadows fall off linearly and image brightness isn't applied.
+
+Or derive from `mkui::DrawBackend` and override `drawQuads` (SDF) or only `drawList` (triangles), then `mkui::draw(ui, backend)`.
+
+## View models without reflection
+
+`mkui::ValueModel` holds named values, nested models and lists; make the `System` with `mkui::valueBinder()`:
+
+```cpp
+mkui::ValueModel hud;
+hud.set("score", 120);
+hud.child("stats").set("hp", 0.8f);   // "stats.hp"
+hud.list("players").resize(3);        // "list players", each row a ValueModel
+mkui::System ui(host, mkui::valueBinder());
+ui.bind(ui.open("ui/hud.ui"), hud.model());
+```
+
+Engines with their own reflection implement `mkui::Binder` instead (MealKit binds `MEALKIT_VIEWMODEL` structs that way).
+
 `mkui/Source.h` edits `.ui` text while keeping comments and order (what an editor uses).
 
 ## Build
@@ -36,8 +65,7 @@ point to the including side's copies (defaults: `third_party/`). If an `mkcontra
 
 ## Planned (MealKit ROADMAP "UI 2")
 
-A draw backend interface, font/image loader hooks, a public API for view model values without engine reflection, then a
-XAML-like layer: data binding (one-way/two-way, converters), styles and control templates, triggers and state
+A XAML-like layer: data binding (one-way/two-way, converters), styles and control templates, triggers and state
 animations, resource dictionaries. Own format; no `.xaml` compatibility is promised. The Penpot plugin moves here too.
 
 Third-party code in `third_party/`: stb_truetype (public domain / MIT), mkcontract (MIT).
