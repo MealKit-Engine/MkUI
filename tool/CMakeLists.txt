@@ -18,8 +18,14 @@ add_library(mkui_imgui STATIC
 target_include_directories(mkui_imgui PUBLIC ${imgui_dir} ${imgui_dir}/backends)
 target_link_libraries(mkui_imgui PUBLIC SDL3::SDL3-static)
 
-add_executable(MkUI WIN32 main.cpp App.h App.cpp)
+add_executable(MkUI WIN32 main.cpp App.h App.cpp PenpotServer.h PenpotServer.cpp)
 target_link_libraries(MkUI PRIVATE mkui mkui_imgui mkcontract_client SDL3::SDL3-static) # mkcontract_client: live connection to running games
+if(WIN32)
+    target_link_libraries(MkUI PRIVATE ws2_32) # Penpot plugin server sockets
+endif()
+# Penpot plugin files (penpot-plugin/dist, committed) next to the exe as penpot/: the Designer serves them
+add_custom_command(TARGET MkUI POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../penpot-plugin/dist ${CMAKE_BINARY_DIR}/bin/penpot)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../penpot-plugin/dist/ DESTINATION penpot)
 if(MSVC)
     target_compile_options(MkUI PRIVATE /W4 /permissive- /utf-8)
 else()

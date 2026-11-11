@@ -1,0 +1,102 @@
+# MealKit UI exported from Penpot: Sandbox UI (file file-1, board id-pause). Do not edit; change it in Penpot and export again.
+@format ui 1
+board pause 1920 1080
+  id id-pause
+  navigation
+  firstFocus resume
+  back pause.resume
+  frame dim
+    id id-dim
+    pos 0 0
+    size 1920 1080
+    constraints leftright topbottom
+    fill #05070C99
+  end
+  frame panel
+    id id-panel
+    pos 710 300
+    size 500 hug
+    constraints center center
+    layout column
+    gap 14
+    padding 32 36 32 36
+    fill #10141CCC
+    stroke 1 #FFFFFF26
+    radius 16
+    shadow 0 12 40 0 #000000AB
+    text pause.title
+      id id-pause.title
+      size fill hug
+      key pause.title
+      font Pretendard-Medium
+      fontSize 40
+      color #F2F4F8
+      lineHeight 1.2
+      textAlign center
+      span 1 color $accent
+    end
+    frame resume
+      id id-resume
+      size fill 60
+      layout row
+      justify center
+      align center
+      fill $accent
+      radius 12
+      on hover fill #FFD86A
+      button pause.resume
+      focusDown leave
+      text pause.resume
+        id id-pause.resume
+        size hug hug
+        key pause.resume
+        font Pretendard-Medium
+        fontSize 32
+        color #10141C
+        lineHeight 1.2
+      end
+    end
+    frame stats
+      id id-stats
+      size fill hug
+      layout grid
+      columns 1fr 120
+      rows auto auto
+      justifyItems stretch
+      gap 8 16
+      align center
+      frame b
+        id id-b
+        size 50 20
+        cell 2 1 1 2
+      end
+      frame a
+        id id-a
+        size fill 20
+        cell 1 1
+        fill #FFFFFF26
+      end
+    end
+    image Pause_Icon
+      id id-Pause-Icon
+      absolute
+      pos 400 20
+      size 24 24
+      src ui/pause/Pause_Icon.png
+    end
+  end
+  frame dot
+    id id-dot
+    pos 105 905
+    size 20 20
+    fill #FFFFFF
+    radius 10
+  end
+  image photo
+    id id-photo
+    pos 110 920
+    size 64 64
+    src ui/pause/photo.png
+    slice 16 16 16 16
+  end
+end

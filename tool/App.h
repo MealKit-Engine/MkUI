@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PenpotServer.h"
 #include "mkui/Document.h"
 #include "mkui/Draw.h"
 #include "mkui/Host.h"
@@ -70,6 +71,7 @@ private:
     using Path = SourcePath;
 
     bool openProject(const std::string& dir);
+    void startPenpot(); // Penpot plugin import server for the open project
     void scanFiles();
     bool openFile(const std::string& uiPath); // "ui/menu.ui"
     bool save();
@@ -139,6 +141,7 @@ private:
     double m_liveCheck = -10.0, m_followTime = 0.0;
     int m_follow = -1; // instance whose values are taken every half second
     std::string m_liveStatus;
+    PenpotServer m_penpot;
     std::string m_showWindow;
     bool m_followFirst = false;
 

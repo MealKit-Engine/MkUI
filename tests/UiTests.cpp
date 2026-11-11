@@ -10,7 +10,9 @@
 #include <cmath>
 
 #include <cstdio>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -234,7 +236,31 @@ void testValueModel() {
 
 } // namespace
 
+// The Penpot plugin converter's expected files (penpot-plugin/test/expected, made by node --test) parse without errors
+void testPenpotExpected() {
+    auto read = [](const char* name, std::string& out) {
+        std::ifstream in(std::string(MKUI_SOURCE_DIR) + "/penpot-plugin/test/expected/" + name, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        out = ss.str();
+        return static_cast<bool>(in);
+    };
+    std::string theme, pause;
+    check(read("theme.ui", theme) && theme.rfind("# MealKit UI exported from Penpot", 0) == 0 && theme.find("color accent #FFC83D") != std::string::npos,
+          "expected theme.ui is in theme format");
+    check(read("pause.ui", pause), "expected pause.ui read");
+    mkui::Theme t;
+    t.colors.emplace_back("accent", 0xFF3DC8FFu);
+    MemoryHost host;
+    mkui::Document doc;
+    const bool ok = mkui::parseDocument(pause, "ui/pause.ui", doc, host, &t);
+    for (const std::string& e : doc.errors) std::printf("  %s\n", e.c_str());
+    check(ok && doc.exported && doc.navigation && doc.firstFocus == "resume" && doc.nodes.size() == 12 && doc.nodes[0].id == "id-pause",
+          "expected pause.ui parses as an exported screen");
+}
+
 int main() {
+    testPenpotExpected();
     testDocument();
     testSourceRoundTrip();
     testSystem();

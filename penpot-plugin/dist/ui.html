@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MealKit</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1f1f1f; --dim: #6b6f78; --line: #e3e5ea; --input: #f3f4f6; --accent: #2a6df4; --ok: #198a3c; --warn: #a86400; --err: #c4302b; }
+  body[data-theme="dark"] { --bg: #18191d; --fg: #e8e9ec; --dim: #8d919a; --line: #2e3036; --input: #24262b; --accent: #6f9cff; --ok: #4cc06c; --warn: #e0a640; --err: #ff6b62; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font: 12px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 16px 0 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+  label { display: block; margin: 6px 0; color: var(--dim); }
+  label > input:not([type=checkbox]), label > select, label > .row { display: block; width: 100%; margin-top: 2px; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--fg); }
+  input, select { font: inherit; color: var(--fg); background: var(--input); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+  .row { display: flex; gap: 4px; }
+  .row input { width: 25%; }
+  button { font: inherit; background: var(--accent); color: #fff; border: 0; border-radius: 4px; padding: 7px 14px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  a { color: var(--accent); }
+  .dim { color: var(--dim); }
+  .title { font-weight: 600; margin-bottom: 4px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  #status { margin: 0 0 4px; }
+  #log { margin-top: 8px; max-height: 220px; overflow: auto; font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<p id="status" class="dim">Connecting to the MkUI Designer...</p>
+<div class="dim">Penpot file: <span id="file"></span></div>
+
+<h2>Layer</h2>
+<div id="layer"></div>
+
+<h2>Export screens</h2>
+<div id="boards"></div>
+<label class="check"><input type="checkbox" id="theme" checked> Design tokens → assets/ui/theme.ui</label>
+<label class="check"><input type="checkbox" id="source" checked> Save the Penpot file in art/ui/</label>
+<label class="check"><input type="checkbox" id="force"> Replace hand-written .ui files</label>
+<p><button id="export">Export</button> <span id="progress" class="dim"></span></p>
+<p class="dim">New to this? <a href="#" id="example">Add an example screen</a> (a pause menu with flex and grid layouts, a button and an icon).</p>
+<div id="log"></div>
+
+<datalist id="fields"></datalist>
+<datalist id="actions"></datalist>
+<script>
+"use strict";
+(() => {
+  // src/encode.ts
+  var enc = null;
+  function text(s) {
+    enc ?? (enc = new TextEncoder());
+    return enc.encode(s);
+  }
+  function buildImport(entries) {
+    const parts = [text("MEALKIT-IMPORT 1\n")];
+    for (const e of entries) {
+      parts.push(text(`${e.kind} ${e.path} ${e.data.length}${e.force ? " force" : ""}
+`), e.data, text("\n"));
+    }
+    return concat(parts);
+  }
+  function concat(parts) {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) {
+      out.set(p, at);
+      at += p.length;
+    }
+    return out;
+  }
+  var crcTable = null;
+  function crc32(data) {
+    if (!crcTable) {
+      crcTable = new Uint32Array(256);
+      for (let i = 0; i < 256; ++i) {
+        let c2 = i;
+        for (let k = 0; k < 8; ++k) c2 = c2 & 1 ? 3988292384 ^ c2 >>> 1 : c2 >>> 1;
+        crcTable[i] = c2 >>> 0;
+      }
+    }
+    let c = 4294967295;
+    for (let i = 0; i < data.length; ++i) c = crcTable[(c ^ data[i]) & 255] ^ c >>> 8;
+    return (c ^ 4294967295) >>> 0;
+  }
+  function buildZip(files) {
+    const local = [];
+    const central = [];
+    let offset = 0;
+    for (const f of files) {
+      const name = text(f.path);
+      const crc = crc32(f.data);
+      const h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 67324752, true);
+      h.setUint16(4, 20, true);
+      h.setUint16(6, 2048, true);
+      h.setUint32(14, crc, true);
+      h.setUint32(18, f.data.length, true);
+      h.setUint32(22, f.data.length, true);
+      h.setUint16(26, name.length, true);
+      local.push(new Uint8Array(h.buffer), name, f.data);
+      const c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 33639248, true);
+      c.setUint16(4, 20, true);
+      c.setUint16(6, 20, true);
+      c.setUint16(8, 2048, true);
+      c.setUint32(16, crc, true);
+      c.setUint32(20, f.data.length, true);
+      c.setUint32(24, f.data.length, true);
+      c.setUint16(28, name.length, true);
+      c.setUint32(42, offset, true);
+      central.push(new Uint8Array(c.buffer), name);
+      offset += 30 + name.length + f.data.length;
+    }
+    const centralBytes = concat(central);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 101010256, true);
+    end.setUint16(8, files.length, true);
+    end.setUint16(10, files.length, true);
+    end.setUint32(12, centralBytes.length, true);
+    end.setUint32(16, offset, true);
+    return concat([...local, centralBytes, new Uint8Array(end.buffer)]);
+  }
+
+  // src/ui.ts
+  var $ = (id) => document.getElementById(id);
+  var project = null;
+  var layers = [];
+  var boards = [];
+  var checked = /* @__PURE__ */ new Set();
+  function post(msg) {
+    parent.postMessage(msg, "*");
+  }
+  function el(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    for (const k of kids) e.append(k);
+    return e;
+  }
+  async function connect() {
+    const status = $("status");
+    try {
+      const r = await fetch("api/project", { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      project = await r.json();
+      status.textContent = `MkUI Designer: ${project.name} (exports go straight into the project)`;
+      status.className = "ok";
+    } catch {
+      project = null;
+      status.textContent = "MkUI Designer not found: Export downloads a zip to unpack in the project folder.";
+      status.className = "warn";
+    }
+    fillLists();
+    renderLayer();
+  }
+  function fillLists() {
+    const fields = $("fields");
+    fields.replaceChildren();
+    for (const vm of project?.viewModels ?? []) for (const f of vm.fields) fields.append(el("option", { value: f.name, label: `${vm.name} (${f.kind})` }));
+    const actions = $("actions");
+    actions.replaceChildren();
+    for (const a of project?.actions ?? []) actions.append(el("option", { value: a }));
+  }
+  var isText = (l) => l.type === "text";
+  var widgetIs = (...w) => (_, d) => w.includes(d.widget ?? "");
+  var defs = [
+    { key: "navigation", label: "Keyboard and gamepad navigation (menus)", kind: "check", show: (l) => l.topBoard },
+    { key: "firstFocus", label: "First focused layer", kind: "text", show: (l) => l.topBoard },
+    { key: "back", label: "Back action (Esc, gamepad B)", kind: "text", list: "actions", show: (l) => l.topBoard },
+    { key: "widget", label: "Widget", kind: "select", options: ["", "button", "toggle", "slider", "select", "textInput", "scroll", "list"], show: (l) => !l.topBoard },
+    { key: "action", label: "Action", kind: "text", list: "actions", show: widgetIs("button", "toggle", "slider", "select", "textInput") },
+    { key: "field", label: "View model field", kind: "text", list: "fields", show: widgetIs("toggle", "slider", "select", "textInput", "list") },
+    { key: "min", label: "Min", kind: "number", show: widgetIs("slider") },
+    { key: "max", label: "Max", kind: "number", show: widgetIs("slider") },
+    { key: "step", label: "Step (0 = smooth)", kind: "number", show: widgetIs("slider") },
+    { key: "options", label: "Options (string keys, comma separated)", kind: "text", show: widgetIs("select") },
+    { key: "placeholder", label: "Placeholder (string key)", kind: "text", show: widgetIs("textInput") },
+    { key: "maxLength", label: "Max characters", kind: "number", show: widgetIs("textInput") },
+    { key: "scrollHorizontal", label: "Scroll sideways", kind: "check", show: widgetIs("scroll") },
+    { key: "key", label: "String key (empty: the layer name if it looks like menu.start)", kind: "text", show: isText },
+    { key: "overflow", label: "Overflow", kind: "select", options: ["", "ellipsis", "clip"], show: isText },
+    { key: "maxLines", label: "Max lines (0 = any)", kind: "number", show: isText },
+    { key: "wrap", label: "Line breaks", kind: "select", options: ["", "word", "syllable", "none"], show: isText },
+    { key: "visible", label: "Visible when (field, !field = when not)", kind: "text", list: "fields", show: (l) => !l.topBoard },
+    { key: "disabled", label: "Disabled when", kind: "text", list: "fields", show: (l) => !l.topBoard },
+    { key: "widthRatio", label: "Width ratio (0..1 field, health bars)", kind: "text", list: "fields", show: (l) => !l.topBoard && !isText(l) },
+    { key: "colorField", label: "Color from field", kind: "text", list: "fields", show: (l) => !l.topBoard },
+    { key: "focusUp", label: "Focus up", kind: "text", show: (_, d) => !!d.widget },
+    { key: "focusDown", label: "Focus down", kind: "text", show: (_, d) => !!d.widget },
+    { key: "focusLeft", label: "Focus left", kind: "text", show: (_, d) => !!d.widget },
+    { key: "focusRight", label: "Focus right", kind: "text", show: (_, d) => !!d.widget },
+    { key: "transition", label: "State change time (s)", kind: "number", show: (_, d) => !!d.widget },
+    { key: "bake", label: "Always bake to PNG", kind: "check", show: (l) => !l.topBoard && !isText(l) }
+  ];
+  var saveTimer = 0;
+  function save(layer) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => post({ type: "setData", id: layer.id, data: layer.data }), 250);
+  }
+  function renderLayer() {
+    const box = $("layer");
+    box.replaceChildren();
+    if (layers.length !== 1) {
+      box.append(el("p", { class: "dim" }, layers.length === 0 ? "Select a layer to set its bindings and widget." : "Select one layer."));
+      return;
+    }
+    const l = layers[0];
+    box.append(el("div", { class: "title" }, `${l.name}`, el("span", { class: "dim" }, ` ${l.type}`)));
+    if (l.topBoard) {
+      const input = el("input", { type: "text", value: l.file });
+      input.addEventListener("change", () => post({ type: "setFile", id: l.id, file: input.value.trim() }));
+      box.append(el("label", {}, "File (assets path)", input));
+    }
+    const d = l.data;
+    for (const f of defs) {
+      if (!f.show(l, d)) continue;
+      const v = d[f.key];
+      let input;
+      if (f.kind === "select") {
+        input = el("select");
+        for (const o of f.options ?? []) input.append(el("option", { value: o }, o || "(none)"));
+        input.value = String(v ?? "");
+      } else {
+        input = el("input", { type: f.kind === "check" ? "checkbox" : f.kind === "number" ? "number" : "text" });
+        if (f.list) input.setAttribute("list", f.list);
+        if (f.kind === "check") input.checked = !!v;
+        else input.value = v === void 0 ? "" : String(v);
+      }
+      input.addEventListener("change", () => {
+        const rec = d;
+        if (f.kind === "check") rec[f.key] = input.checked;
+        else if (f.kind === "number") rec[f.key] = input.value === "" ? void 0 : Number(input.value);
+        else rec[f.key] = input.value.trim() || void 0;
+        save(l);
+        if (f.key === "widget") renderLayer();
+      });
+      box.append(f.kind === "check" ? el("label", { class: "check" }, input, f.label) : el("label", {}, f.label, input));
+    }
+    if (!l.topBoard && !isText(l)) {
+      const s = d.slice ?? [0, 0, 0, 0];
+      const row = el("div", { class: "row" });
+      ["left", "top", "right", "bottom"].forEach((name, i) => {
+        const input = el("input", { type: "number", value: String(s[i]), title: name });
+        input.addEventListener("change", () => {
+          const next = [...d.slice ?? [0, 0, 0, 0]];
+          next[i] = Number(input.value) || 0;
+          d.slice = next.some((x) => x !== 0) ? next : void 0;
+          save(l);
+        });
+        row.append(input);
+      });
+      box.append(el("label", {}, "9-slice margins when baked (left top right bottom)", row));
+    }
+  }
+  function renderBoards() {
+    const list = $("boards");
+    list.replaceChildren();
+    for (const b of boards) {
+      const box = el("input", { type: "checkbox" });
+      box.checked = checked.has(b.id);
+      box.addEventListener("change", () => box.checked ? checked.add(b.id) : checked.delete(b.id));
+      const name = el("a", { href: "#" }, b.name);
+      name.addEventListener("click", (e) => {
+        e.preventDefault();
+        post({ type: "select", id: b.id });
+      });
+      list.append(el("label", { class: "check" }, box, name, el("span", { class: "dim" }, " → assets/" + b.file)));
+    }
+    if (boards.length === 0) list.append(el("p", { class: "dim" }, "No boards on this page. Each top-level board is one screen."));
+  }
+  function log(line, cls = "") {
+    $("log").append(el("div", { class: cls }, line));
+  }
+  async function finishExport(msg) {
+    const force = $("force").checked;
+    const entries = [];
+    const strings = /* @__PURE__ */ new Map();
+    let blocked = false;
+    for (const s of msg.screens) {
+      log(`${s.board} → assets/${s.file}: ${s.nodeCount} nodes, ${s.images.length} image(s)`);
+      for (const w of s.warnings) log("  " + w, "warn");
+      for (const e of s.errors) log("  " + e, "err");
+      if (s.errors.length > 0) {
+        blocked = true;
+        continue;
+      }
+      entries.push({ kind: "ui", path: s.file, data: text(s.ui), force });
+      const screen = s.file.replace(/^ui\//, "").replace(/\.ui$/, "");
+      entries.push({ kind: "clean", path: `ui/${screen}/`, data: new Uint8Array() });
+      for (const img of s.images) entries.push({ kind: "png", path: img.path, data: img.data });
+      for (const kv of s.strings) strings.set(kv.key, kv.text);
+      const boxes = [`# Penpot layout boxes of assets/${s.file} (logical units from the board's top left): id x y w h name [tab text]`];
+      for (const b of s.boxes) boxes.push(`${b.id} ${b.x} ${b.y} ${b.w} ${b.h} ${b.name}${b.text !== void 0 ? "	" + b.text : ""}`);
+      entries.push({ kind: "boxes", path: screen + ".boxes", data: text(boxes.join("\n") + "\n") });
+      if (s.preview) entries.push({ kind: "preview", path: screen + ".png", data: s.preview });
+    }
+    if (blocked) {
+      log("Fix the errors above and export again (nothing was written for those screens).", "err");
+    }
+    if (strings.size > 0) entries.push({ kind: "strings", path: "-", data: text([...strings].map(([k, v]) => `${k} = ${v}`).join("\n") + "\n") });
+    if (msg.theme) {
+      entries.push({ kind: "theme", path: "ui/theme.ui", data: text(msg.theme.ui) });
+      for (const w of msg.theme.warnings) log("  " + w, "warn");
+    }
+    if (msg.source) entries.push({ kind: "penpot", path: msg.source.name, data: msg.source.data });
+    if (entries.length === 0) return;
+    if (project) {
+      try {
+        const r = await fetch("api/export", { method: "POST", body: buildImport(entries), headers: { "Content-Type": "application/octet-stream" } });
+        const res = await r.json();
+        for (const w of res.written ?? []) log("wrote " + w, "ok");
+        for (const w of res.warnings ?? []) log(w, "warn");
+        for (const e of res.errors ?? []) log(e, "err");
+        log(res.ok ? "Done. MkUI and running games reload the screens." : "Some files were not written.", res.ok ? "ok" : "err");
+      } catch (e) {
+        log("Could not reach the MkUI Designer: " + String(e), "err");
+      }
+      return;
+    }
+    const files = [];
+    for (const e of entries) {
+      if (e.kind === "ui" || e.kind === "png" || e.kind === "theme") files.push({ path: "assets/" + e.path, data: e.data });
+      else if (e.kind === "penpot") files.push({ path: "art/ui/" + e.path, data: e.data });
+      else if (e.kind === "boxes") files.push({ path: "art/ui/boxes/" + e.path, data: e.data });
+      else if (e.kind === "preview") files.push({ path: "art/ui/preview/" + e.path, data: e.data });
+      else if (e.kind === "strings") files.push({ path: "penpot-strings.txt", data: e.data });
+    }
+    const blob = new Blob([buildZip(files)], { type: "application/zip" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: `${msg.fileName || "penpot"}-ui.zip` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    log("Downloaded the zip. Unpack it in the project folder; add the keys in penpot-strings.txt to assets/strings.", "ok");
+  }
+  window.addEventListener("message", (ev) => {
+    const msg = ev.data;
+    if (!msg || typeof msg !== "object") return;
+    switch (msg.type) {
+      case "init":
+        document.body.dataset.theme = msg.theme;
+        $("file").textContent = msg.fileName;
+        break;
+      case "selection":
+        layers = msg.layers;
+        renderLayer();
+        break;
+      case "boards":
+        boards = msg.boards;
+        for (const id of [...checked]) if (!boards.some((b) => b.id === id)) checked.delete(id);
+        renderBoards();
+        break;
+      case "progress":
+        $("progress").textContent = msg.text;
+        break;
+      case "exported":
+        $("progress").textContent = "";
+        finishExport(msg).finally(() => $("export").disabled = false);
+        break;
+      case "error":
+        $("progress").textContent = "";
+        log(msg.message, "err");
+        $("export").disabled = false;
+        break;
+    }
+  });
+  $("export").addEventListener("click", () => {
+    if (checked.size === 0) {
+      log("Tick the boards to export.", "warn");
+      return;
+    }
+    $("log").replaceChildren();
+    $("export").disabled = true;
+    post({
+      type: "export",
+      boardIds: [...checked],
+      fonts: project?.fonts ?? [],
+      nodeBudget: 500,
+      theme: $("theme").checked,
+      source: $("source").checked
+    });
+  });
+  $("example").addEventListener("click", () => post({ type: "example" }));
+  document.body.dataset.theme = new URLSearchParams(location.search).get("theme") ?? "light";
+  post({ type: "ready" });
+  connect();
+})();
+</script>
+</body>
+</html>

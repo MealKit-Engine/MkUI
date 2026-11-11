@@ -6,7 +6,7 @@
 #   MKUI_STB_DIR          folder containing stb_truetype.h (the implementation is compiled here)
 #   MKUI_MKCONTRACT_DIR   mkcontract source folder, used only if no mkcontract target exists yet ("@format ui N" lines)
 cmake_minimum_required(VERSION 3.25)
-project(mkui VERSION 0.5.0 LANGUAGES CXX)
+project(mkui VERSION 0.6.0 LANGUAGES CXX)
 
 if(NOT MKUI_STB_DIR)
     set(MKUI_STB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
@@ -57,6 +57,7 @@ if(MKUI_BUILD_TESTS)
     enable_testing()
     add_executable(mkui_tests tests/UiTests.cpp)
     target_link_libraries(mkui_tests PRIVATE mkui)
+    target_compile_definitions(mkui_tests PRIVATE MKUI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}") # Penpot expected files
     if(MSVC)
         target_compile_options(mkui_tests PRIVATE /W4 /permissive- /utf-8)
         target_compile_definitions(mkui_tests PRIVATE _CRT_SECURE_NO_WARNINGS)

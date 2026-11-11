@@ -46,3 +46,18 @@ jobs:
         run: cmake --build build
       - name: Test (no GPU)
         run: ctest --test-dir build --output-on-failure
+
+  penpot-plugin:
+    name: Penpot plugin (converter tests, types)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: penpot-plugin
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: npm run check

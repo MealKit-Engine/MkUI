@@ -1,0 +1,4 @@
+# MealKit UI exported from Penpot: design tokens of Sandbox UI. Do not edit; change the tokens in Penpot and export again.
+@format ui 1
+color accent #FFC83D
+number radius 12

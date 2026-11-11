@@ -81,7 +81,6 @@ files the game reads as they are.
   (MealKit dev builds, engine `ui/` service) is listed with its open screens; **Take values** copies the view model it has
   bound to this screen, **Follow** keeps copying twice a second. Saved `.ui` files reload in the running game by themselves.
 - A file changed on disk reloads by itself when there are no edits. Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
-- Next (taking over the MealKit editor's UI workspace): the editor's inspector rows and canvas drop, then the editor's UI workspace goes; the Penpot plugin.
 
 ```
 MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--show Values] [--follow] [--resolution 0-4] [--frames N --capture shot.png]
@@ -90,6 +89,17 @@ MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 
 The preview is close to the engine's SDF look but not the same (linear shadow falloff, image brightness not applied, a
 fixed glyph edge). The MealKit editor lists the program in its **Tools** menu when `MkUI` and `mealkit-tool.txt` (both in
 `build/bin`) are in `%LOCALAPPDATA%\MealKit\tools\ui\`, or with `--tool-path build/bin`. `-DMKUI_BUILD_TOOL=OFF` skips it.
+
+
+### Penpot plugin
+
+`penpot-plugin/` is the Penpot plugin that exports screen boards as `.ui` files, baked PNGs, strings and theme tokens (TypeScript;
+`dist/` is committed, so nobody needs Node.js to use it). The Designer serves it while a project is open, on `127.0.0.1:27240`
+(the next 9 if in use) under a token path that is kept per project in the user's MkUI folder, so the install address stays the
+same. The **Penpot plugin** button in **Files** copies the address; in Penpot, Plugins > Install and paste it. Exports from the plugin panel are
+written into the open project (`assets/ui`, `assets/strings/<language>.txt`, `art/ui/`); hand-written screens are not overwritten
+unless asked. Without the Designer the panel downloads a zip instead. Changing the plugin: `npm install`, `npm run build`,
+`npm test` in `penpot-plugin/`.
 
 ## Build
 
@@ -103,6 +113,6 @@ point to the including side's copies (defaults: `third_party/`). If an `mkcontra
 ## Planned (MealKit ROADMAP "UI 2")
 
 A XAML-like layer: data binding (one-way/two-way, converters), styles and control templates, triggers and state
-animations, resource dictionaries. Own format; no `.xaml` compatibility is promised. The Penpot plugin moves here too, next to the Designer.
+animations, resource dictionaries. Own format; no `.xaml` compatibility is promised.
 
 Third-party code in `third_party/`: stb_truetype (public domain / MIT), mkcontract (MIT); for the Designer only, SDL 3.4.18 (Zlib) and Dear ImGui v1.92.9b-docking (MIT).

@@ -178,6 +178,7 @@ bool App::init(SDL_Renderer* renderer, const std::string& projectDir, const std:
 }
 
 void App::shutdown() {
+    m_penpot.stop();
     if (m_ui) m_ui->closeAll();
     m_ui.reset();
     for (SDL_Texture* t : {m_target, m_glyphTexture, m_imageTexture})
@@ -241,7 +242,57 @@ bool App::openProject(const std::string& dir) {
     m_host.loadStrings(m_language);
     m_ui = std::make_unique<System>(m_host, valueBinder());
     scanFiles();
+    startPenpot();
     return true;
+}
+
+// Penpot plugin import server for this project. The token is kept per project in the user's MkUI folder so the plugin's install
+// address stays the same between runs (DECISIONS 2026-11-12 "The MkUI Designer serves the Penpot plugin")
+void App::startPenpot() {
+    m_penpot.stop();
+    PenpotProject p;
+    p.dir = pathOf(m_project);
+    p.name = utf8Of(p.dir.filename());
+    p.language = m_language;
+    std::string settings;
+    if (readText(p.dir / "mealkit.project", settings)) { // "language ko": the table new string keys go to
+        std::istringstream in(settings);
+        for (std::string line; std::getline(in, line);) {
+            line = trim(line);
+            if (line.rfind("language ", 0) == 0) p.language = trim(line.substr(9));
+            if (line.rfind("name ", 0) == 0) p.name = trim(line.substr(5));
+        }
+    }
+    const char* base = SDL_GetBasePath();
+    p.pluginDir = pathOf(base ? base : "") / "penpot";
+    std::filesystem::path tokens;
+    if (char* pref = SDL_GetPrefPath("MealKit", "MkUI")) {
+        tokens = pathOf(pref) / "penpot-tokens.txt";
+        SDL_free(pref);
+    }
+    std::string text;
+    std::vector<std::string> lines;
+    if (!tokens.empty() && readText(tokens, text)) { // "<token> <project folder>"
+        std::istringstream in(text);
+        for (std::string line; std::getline(in, line);) {
+            line = trim(line);
+            if (line.empty()) continue;
+            lines.push_back(line);
+            const size_t sp = line.find(' ');
+            if (sp != std::string::npos && line.substr(sp + 1) == m_project) p.token = line.substr(0, sp);
+        }
+    }
+    if (!m_penpot.start(p)) {
+        m_host.warnings.push_back("Penpot plugin: no free local port (27240-27249)");
+        return;
+    }
+    if (p.token.empty() && !tokens.empty()) { // remember the new one
+        const std::string url = m_penpot.pluginUrl();
+        const size_t a = url.find('/', 8) + 1;
+        lines.push_back(url.substr(a, url.find('/', a) - a) + " " + m_project);
+        std::ofstream out(tokens, std::ios::binary);
+        for (const std::string& l : lines) out << l << '\n';
+    }
 }
 
 void App::scanFiles() {
@@ -370,6 +421,13 @@ bool App::guardUnsaved(int next) {
 
 void App::frame(double dt) {
     m_time += dt;
+    m_penpot.poll();
+    for (const std::string& e : m_penpot.takeEvents()) { // an export finished: new screens show, the open one reloads if it changed
+        m_status = e;
+        m_statusTime = m_time;
+        if (e.rfind("Penpot import: ", 0) == 0) m_host.warnings.push_back(e);
+        else scanFiles();
+    }
     {
         std::string picked;
         {
@@ -498,6 +556,15 @@ void App::drawFiles() {
     if (ImGui::SmallButton("New screen")) m_nameDialog = 1;
     ImGui::SameLine();
     if (ImGui::SmallButton("Refresh")) scanFiles();
+    if (m_penpot.running()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Penpot plugin")) {
+            ImGui::SetClipboardText(m_penpot.pluginUrl().c_str());
+            m_status = "Copied the Penpot plugin address: in Penpot, Plugins > Install, paste it";
+            m_statusTime = m_time;
+        }
+        ImGui::SetItemTooltip("Copies %s\nIn Penpot: Plugins > Install. Exports from the MealKit plugin are written into this project", m_penpot.pluginUrl().c_str());
+    }
     for (const std::string& f : m_files) {
         const std::string label = f.substr(3); // without "ui/"
         if (ImGui::Selectable(label.c_str(), f == m_file) && f != m_file) {

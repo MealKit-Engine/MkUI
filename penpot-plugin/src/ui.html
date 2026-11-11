@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MealKit</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1f1f1f; --dim: #6b6f78; --line: #e3e5ea; --input: #f3f4f6; --accent: #2a6df4; --ok: #198a3c; --warn: #a86400; --err: #c4302b; }
+  body[data-theme="dark"] { --bg: #18191d; --fg: #e8e9ec; --dim: #8d919a; --line: #2e3036; --input: #24262b; --accent: #6f9cff; --ok: #4cc06c; --warn: #e0a640; --err: #ff6b62; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font: 12px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 16px 0 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+  label { display: block; margin: 6px 0; color: var(--dim); }
+  label > input:not([type=checkbox]), label > select, label > .row { display: block; width: 100%; margin-top: 2px; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--fg); }
+  input, select { font: inherit; color: var(--fg); background: var(--input); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+  .row { display: flex; gap: 4px; }
+  .row input { width: 25%; }
+  button { font: inherit; background: var(--accent); color: #fff; border: 0; border-radius: 4px; padding: 7px 14px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  a { color: var(--accent); }
+  .dim { color: var(--dim); }
+  .title { font-weight: 600; margin-bottom: 4px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  #status { margin: 0 0 4px; }
+  #log { margin-top: 8px; max-height: 220px; overflow: auto; font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<p id="status" class="dim">Connecting to the MkUI Designer...</p>
+<div class="dim">Penpot file: <span id="file"></span></div>
+
+<h2>Layer</h2>
+<div id="layer"></div>
+
+<h2>Export screens</h2>
+<div id="boards"></div>
+<label class="check"><input type="checkbox" id="theme" checked> Design tokens → assets/ui/theme.ui</label>
+<label class="check"><input type="checkbox" id="source" checked> Save the Penpot file in art/ui/</label>
+<label class="check"><input type="checkbox" id="force"> Replace hand-written .ui files</label>
+<p><button id="export">Export</button> <span id="progress" class="dim"></span></p>
+<p class="dim">New to this? <a href="#" id="example">Add an example screen</a> (a pause menu with flex and grid layouts, a button and an icon).</p>
+<div id="log"></div>
+
+<datalist id="fields"></datalist>
+<datalist id="actions"></datalist>
+<script>/*UI_SCRIPT*/</script>
+</body>
+</html>
