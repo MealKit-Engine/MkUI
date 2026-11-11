@@ -195,6 +195,28 @@ void App::setPendingProject(const std::string& dir) {
     m_dialogProject = dir;
 }
 
+bool App::selectByName(const std::string& name) {
+    if (m_source.root.children.empty()) return false;
+    Path path;
+    // depth first through the board
+    struct Walk {
+        const std::string& name;
+        Path& path;
+        bool operator()(const SourceNode& n) {
+            if (n.name == name) return true;
+            for (u32 i = 0; i < n.children.size(); ++i) {
+                path.push_back(i);
+                if ((*this)(n.children[i])) return true;
+                path.pop_back();
+            }
+            return false;
+        }
+    } walk{name, path};
+    if (!walk(m_source.root.children[0])) return false;
+    m_selected = path, m_hasSelection = true;
+    return true;
+}
+
 bool App::openProject(const std::string& dir) {
     std::error_code ec;
     const std::filesystem::path assets = pathOf(dir) / "assets";
@@ -303,9 +325,11 @@ void App::textChanged() {
     } else m_sourceError = error;
     m_host.quiet = true;
     m_doc = Document{};
-    const bool docOk = parseDocument(m_text, m_file, m_doc, m_host);
+    Theme theme; // number tokens ($gap) need it, as in the runtime
+    loadTheme(theme, m_host);
+    parseDocument(m_text, m_file, m_doc, m_host, &theme); // keeps what it read even with errors
     m_host.quiet = false;
-    m_docPaths = docOk && m_sourceError.empty() ? mapDocumentNodes(m_source, m_doc) : std::vector<Path>{};
+    m_docPaths = m_sourceError.empty() ? mapDocumentNodes(m_source, m_doc) : std::vector<Path>{};
     if (m_hasSelection && !findNode(m_source, m_selected)) m_hasSelection = false;
     if (m_screen != kNoScreen) m_ui->setDraft(m_screen, m_text == m_savedText ? nullptr : &m_text);
 }
@@ -735,6 +759,105 @@ int App::pickNode(float x, float y) const {
     return best;
 }
 
+namespace {
+
+std::vector<std::string> words(const std::string& s) {
+    std::vector<std::string> out;
+    std::istringstream in(s);
+    for (std::string w; in >> w;) out.push_back(w);
+    return out;
+}
+
+bool toNumber(const std::string& s, float& out) {
+    char* end = nullptr;
+    out = std::strtof(s.c_str(), &end);
+    return end && end != s.c_str() && *end == 0;
+}
+
+std::string whole(float v) { return std::to_string(static_cast<int>(std::lround(v))); }
+
+constexpr int kHandles[] = {1 | 4, 2 | 4, 1 | 8, 2 | 8, 1, 2, 4, 8}; // 1 left 2 right 4 top 8 bottom
+
+ImVec2 handlePoint(int h, ImVec2 a, ImVec2 b) {
+    return ImVec2((h & 1) ? a.x : (h & 2) ? b.x : (a.x + b.x) * 0.5f, (h & 4) ? a.y : (h & 8) ? b.y : (a.y + b.y) * 0.5f);
+}
+
+} // namespace
+
+bool App::selectedBox(NodeBox& out) const {
+    if (!m_hasSelection || m_screen == kNoScreen || m_docPaths.empty()) return false;
+    for (const NodeBox& b : m_ui->boxes(m_screen))
+        if (b.visible && b.node < m_docPaths.size() && m_docPaths[b.node] == m_selected) {
+            out = b;
+            return true;
+        }
+    return false;
+}
+
+// Move needs a number "pos" (layout children and $tokens aren't dragged); resize changes only the dragged axes
+void App::startDrag(int kind, int handle, float mx, float my) {
+    m_drag = kind, m_handle = handle;
+    m_dragArmed = kind != 1;
+    m_dragStart[0] = mx, m_dragStart[1] = my;
+    m_dragBefore = m_text;
+    if (kind == 3) return;
+    const SourceNode* n = findNode(m_source, m_selected);
+    NodeBox b{};
+    if (!n || m_selected.empty() || m_source.exported || !m_sourceError.empty() || !selectedBox(b)) {
+        m_drag = 0;
+        return;
+    }
+    std::string value;
+    std::vector<std::string> w;
+    m_startPos[0] = m_startPos[1] = 0.0f;
+    const bool hasPos = getProperty(*n, "pos", value) && (w = words(value)).size() == 2 && toNumber(w[0], m_startPos[0]) &&
+                        toNumber(w[1], m_startPos[1]);
+    if (kind == 1 && !hasPos) {
+        m_drag = 0;
+        return; // selected only; layout children move with their parent
+    }
+    if (kind == 2 && !hasPos) m_handle &= ~(1 | 4); // the left/top edges need a pos
+    if (kind == 2 && m_handle == 0) {
+        m_drag = 0;
+        return;
+    }
+    m_startSize[0] = b.w, m_startSize[1] = b.h; // hug/fill/$token start from the drawn size
+    if (getProperty(*n, "size", value)) {
+        w = words(value);
+        for (size_t i = 0; i < 2 && i < w.size(); ++i) toNumber(w[i], m_startSize[i]);
+    }
+}
+
+void App::applyDrag(float dx, float dy, bool snap) {
+    SourceNode* n = findNode(m_source, m_selected);
+    if (!n) return;
+    auto grid = [&](float v) { return snap ? std::round(v / 10.0f) * 10.0f : v; }; // Shift: 10-unit grid
+    if (m_drag == 1) setProperty(*n, "pos", whole(grid(m_startPos[0] + dx)) + " " + whole(grid(m_startPos[1] + dy)));
+    else if (m_drag == 2) {
+        float x = m_startPos[0], y = m_startPos[1], w = m_startSize[0], h = m_startSize[1];
+        if (m_handle & 2) w = grid(x + w + dx) - x;
+        if (m_handle & 8) h = grid(y + h + dy) - y;
+        if (m_handle & 1) {
+            const float right = x + w;
+            x = grid(x + dx);
+            w = right - x;
+        }
+        if (m_handle & 4) {
+            const float bottom = y + h;
+            y = grid(y + dy);
+            h = bottom - y;
+        }
+        std::string value;
+        std::vector<std::string> size = getProperty(*n, "size", value) ? words(value) : std::vector<std::string>{};
+        size.resize(2, "hug");
+        if (m_handle & 3) size[0] = whole(std::max(w, 1.0f));
+        if (m_handle & 12) size[1] = whole(std::max(h, 1.0f));
+        setProperty(*n, "size", size[0] + " " + size[1]);
+        if (m_handle & 5) setProperty(*n, "pos", whole(x) + " " + whole(y));
+    }
+    sourceEdited();
+}
+
 void App::drawPreview(double dt) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Preview");
@@ -745,27 +868,31 @@ void App::drawPreview(double dt) {
         return;
     }
     const Resolution& res = kResolutions[m_resolution];
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float fit = std::max(0.05f, std::min(avail.x / res.w, avail.y / res.h));
-    const ImVec2 size(res.w * fit, res.h * fit);
     const ImVec2 cursor = ImGui::GetCursorScreenPos();
-    const ImVec2 pos(cursor.x + (avail.x - size.x) * 0.5f, cursor.y + (avail.y - size.y) * 0.5f);
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float fit = std::max(0.05f, std::min(avail.x / res.w, avail.y / res.h)) * m_zoom;
+    const ImVec2 size(res.w * fit, res.h * fit);
+    const ImVec2 pos(std::floor(cursor.x + (avail.x - size.x) * 0.5f + m_panX), std::floor(cursor.y + (avail.y - size.y) * 0.5f + m_panY));
 
-    // Input for this frame (pixels of the preview resolution)
-    ImGui::SetCursorScreenPos(pos);
-    ImGui::InvisibleButton("##preview", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)));
+    // The whole panel takes the mouse (zoom and pan work outside the picture too)
+    ImGui::SetCursorScreenPos(cursor);
+    ImGui::InvisibleButton("##preview", ImVec2(std::max(avail.x, 1.0f), std::max(avail.y, 1.0f)),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
-    const ImVec2 mouse = ImGui::GetIO().MousePos;
-    const float mx = (mouse.x - pos.x) / fit, my = (mouse.y - pos.y) / fit;
-    static float lastX = 0, lastY = 0;
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mouse = io.MousePos;
+    const float mx = (mouse.x - pos.x) / fit, my = (mouse.y - pos.y) / fit; // preview pixels
+    const bool overPicture = hovered && mx >= 0 && my >= 0 && mx < res.w && my < res.h;
+
     FrameInput input;
-    if (m_interact && hovered) {
+    static float lastX = 0, lastY = 0;
+    if (m_interact && overPicture) {
         input.mouse = true;
         input.mouseX = mx, input.mouseY = my;
         input.mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
         input.mousePressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         input.mouseMoved = mx != lastX || my != lastY;
-        input.wheel = ImGui::GetIO().MouseWheel;
+        input.wheel = io.MouseWheel;
     }
     lastX = mx, lastY = my;
     m_ui->update(input, Viewport{0, 0, static_cast<f32>(res.w), static_cast<f32>(res.h)}, dt);
@@ -777,23 +904,97 @@ void App::drawPreview(double dt) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(m_target)), pos, ImVec2(pos.x + size.x, pos.y + size.y));
 
-    // Node boxes: screen pixel = origin + logical × scale, then into the panel
+    // Logical (board) units ↔ panel: screen pixel = origin + logical × scale
     const ScreenInfo info = m_ui->info(m_screen);
-    auto toPanel = [&](float lx, float ly) { return ImVec2(pos.x + (info.originX + lx * info.scale) * fit, pos.y + (info.originY + ly * info.scale) * fit); };
-    const float lx = (mx - info.originX) / std::max(info.scale, 1e-4f), ly = (my - info.originY) / std::max(info.scale, 1e-4f);
-    const int hoverNode = !m_interact && hovered ? pickNode(lx, ly) : -1;
+    const float unit = std::max(info.scale, 1e-4f);
+    auto toPanel = [&](float x, float y) { return ImVec2(pos.x + (info.originX + x * unit) * fit, pos.y + (info.originY + y * unit) * fit); };
+    const float lx = (mx - info.originX) / unit, ly = (my - info.originY) / unit;
+
+    // Zoom at the mouse (wheel), pan with the middle button or Space + left, F fits again
+    if (hovered && !m_interact && io.MouseWheel != 0.0f) {
+        const float old = m_zoom;
+        m_zoom = std::clamp(m_zoom * std::pow(1.15f, io.MouseWheel), 0.1f, 16.0f);
+        const float k = m_zoom / old;
+        const ImVec2 c(cursor.x + avail.x * 0.5f + m_panX, cursor.y + avail.y * 0.5f + m_panY); // picture center
+        m_panX += (mouse.x - c.x) * (1.0f - k);
+        m_panY += (mouse.y - c.y) * (1.0f - k);
+    }
+    if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) m_zoom = 1.0f, m_panX = m_panY = 0.0f;
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) startDrag(3, 0, mouse.x, mouse.y);
+
+    // Selected box and its handles
+    NodeBox sel{};
+    const bool hasBox = selectedBox(sel);
+    const bool handles = hasBox && !m_interact && !m_selected.empty() && !m_source.exported;
+    ImVec2 a, b;
+    int hoverHandle = 0;
+    if (hasBox) {
+        a = toPanel(sel.x, sel.y), b = toPanel(sel.x + sel.w, sel.y + sel.h);
+        if (handles && hovered)
+            for (int h : kHandles) {
+                const ImVec2 p = handlePoint(h, a, b);
+                if (std::fabs(mouse.x - p.x) <= 6 && std::fabs(mouse.y - p.y) <= 6) {
+                    hoverHandle = h;
+                    break;
+                }
+            }
+    }
+    const int hoverNode = !m_interact && overPicture && !hoverHandle && m_drag == 0 ? pickNode(lx, ly) : -1;
     const bool mapped = !m_docPaths.empty();
-    for (const NodeBox& b : m_ui->boxes(m_screen)) {
-        if (!b.visible) continue;
-        const bool selected = mapped && m_hasSelection && b.node < m_docPaths.size() && m_docPaths[b.node] == m_selected;
-        if (selected) draw->AddRect(toPanel(b.x, b.y), toPanel(b.x + b.w, b.y + b.h), IM_COL32(80, 170, 255, 255), 0, 0, 2.0f);
-        else if (static_cast<int>(b.node) == hoverNode) draw->AddRect(toPanel(b.x, b.y), toPanel(b.x + b.w, b.y + b.h), IM_COL32(255, 255, 255, 110));
-        if (b.overflow) draw->AddRect(toPanel(b.x, b.y), toPanel(b.x + b.w, b.y + b.h), IM_COL32(255, 120, 60, 200));
-    }
+
     if (!m_interact && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        if (hoverNode >= 0 && mapped && static_cast<size_t>(hoverNode) < m_docPaths.size()) m_selected = m_docPaths[hoverNode], m_hasSelection = true;
-        else m_hasSelection = false;
+        if (ImGui::IsKeyDown(ImGuiKey_Space)) startDrag(3, 0, mouse.x, mouse.y);
+        else if (hoverHandle) startDrag(2, hoverHandle, mouse.x, mouse.y);
+        else if (hoverNode >= 0 && mapped && static_cast<size_t>(hoverNode) < m_docPaths.size()) {
+            m_selected = m_docPaths[hoverNode], m_hasSelection = true;
+            startDrag(1, 0, mouse.x, mouse.y);
+        } else m_hasSelection = false;
     }
+    if (m_drag) {
+        const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        const float dx = mouse.x - m_dragStart[0], dy = mouse.y - m_dragStart[1];
+        if (m_drag == 3) m_panX += io.MouseDelta.x, m_panY += io.MouseDelta.y;
+        else {
+            if (!m_dragArmed && (std::fabs(dx) > 3 || std::fabs(dy) > 3)) m_dragArmed = true;
+            if (m_dragArmed && down) applyDrag(dx / (fit * unit), dy / (fit * unit), io.KeyShift);
+        }
+        if (!down) {
+            if (m_drag != 3 && m_dragBefore != m_text) { // the whole drag is one undo step
+                m_undo.push_back(m_dragBefore);
+                m_redo.clear();
+            }
+            m_drag = 0;
+        }
+    }
+
+    for (const NodeBox& nb : m_ui->boxes(m_screen)) {
+        if (!nb.visible) continue;
+        if (static_cast<int>(nb.node) == hoverNode && !(hasBox && nb.node == sel.node))
+            draw->AddRect(toPanel(nb.x, nb.y), toPanel(nb.x + nb.w, nb.y + nb.h), IM_COL32(255, 255, 255, 110));
+        if (nb.overflow) draw->AddRect(toPanel(nb.x, nb.y), toPanel(nb.x + nb.w, nb.y + nb.h), IM_COL32(255, 120, 60, 200));
+    }
+    if (hasBox) {
+        draw->AddRect(a, b, IM_COL32(80, 170, 255, 255), 0, 0, 2.0f);
+        if (handles)
+            for (int h : kHandles) {
+                const ImVec2 p = handlePoint(h, a, b);
+                const bool hot = h == hoverHandle || (m_drag == 2 && h == m_handle);
+                draw->AddRectFilled(ImVec2(p.x - 4, p.y - 4), ImVec2(p.x + 4, p.y + 4), hot ? IM_COL32(80, 170, 255, 255) : IM_COL32(255, 255, 255, 255));
+                draw->AddRect(ImVec2(p.x - 4, p.y - 4), ImVec2(p.x + 4, p.y + 4), IM_COL32(30, 90, 170, 255));
+            }
+        if (const SourceNode* n = findNode(m_source, m_selected)) {
+            const std::string label = n->name + "  " + whole(sel.w) + " x " + whole(sel.h);
+            draw->AddText(ImVec2(a.x, b.y + 4), IM_COL32(80, 170, 255, 255), label.c_str());
+        }
+    }
+    if (hoverHandle)
+        ImGui::SetMouseCursor(hoverHandle == 1 || hoverHandle == 2   ? ImGuiMouseCursor_ResizeEW
+                              : hoverHandle == 4 || hoverHandle == 8 ? ImGuiMouseCursor_ResizeNS
+                              : hoverHandle == (1 | 4) || hoverHandle == (2 | 8) ? ImGuiMouseCursor_ResizeNWSE
+                                                                                 : ImGuiMouseCursor_ResizeNESW);
+    char zoom[80];
+    std::snprintf(zoom, sizeof zoom, "%d%%   wheel zoom, middle drag pan, F fit, Shift snaps to 10", static_cast<int>(std::lround(fit * 100.0f)));
+    draw->AddText(ImVec2(cursor.x + 8, cursor.y + avail.y - ImGui::GetTextLineHeight() - 6), IM_COL32(200, 200, 200, 150), zoom);
     ImGui::End();
 }
 

@@ -62,13 +62,13 @@ files the game reads as they are.
 - **Files** lists `assets/ui` (and its subfolders); **Source** is the text with comments, **Tree** and **Properties** edit
   nodes and property lines through `mkui/Source.h`, so comments and order stay. Unsaved edits show in the preview at once.
 - **Preview** draws through `mkui::tessellate` on SDL_Renderer at a chosen resolution, with the project's fonts, images,
-  theme (`ui/theme.ui`) and strings (`assets/strings/<language>.txt`). A click selects the node under it; with
+  theme (`ui/theme.ui`) and strings (`assets/strings/<language>.txt`). Wheel zooms at the mouse, the middle button (or Space + drag) pans, F fits. A click selects the node under it; dragging moves a node that has a number `pos` (layout children follow their parent), the eight handles resize it (only the dragged axes become numbers), Shift snaps to 10 units, one drag is one undo step. With
   **Interact** on, buttons, sliders and inputs work and their actions are listed in **Problems**. Orange boxes are cut text.
 - A file changed on disk reloads by itself when there are no edits. Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
-- Next: fake view-model values (`ValueModel`), telling running games to reload, the Penpot plugin.
+- Next (taking over the MealKit editor's UI workspace): components and new screens, fake view-model values (`ValueModel`), real values from the editor and reload in running games over the live connection, the Penpot plugin.
 
 ```
-MkUI [--project <project folder>] [--file ui/menu.ui] [--resolution 0-4] [--frames N --capture shot.png]
+MkUI [--project <project folder>] [--file ui/menu.ui] [--select <node>] [--zoom 1.5] [--resolution 0-4] [--frames N --capture shot.png]
 ```
 
 The preview is close to the engine's SDF look but not the same (linear shadow falloff, image brightness not applied, a

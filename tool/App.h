@@ -52,6 +52,8 @@ public:
     bool canQuit() const { return m_quitConfirmed; }
     std::string title() const;
     void setPendingProject(const std::string& dir); // from the folder dialog thread
+    bool selectByName(const std::string& name);     // first node with this name (command line --select)
+    void setZoom(float zoom) { m_zoom = zoom; }
     void* window = nullptr;                          // SDL_Window* (dialog parent)
 
 private:
@@ -84,6 +86,9 @@ private:
     void renderPreview(int width, int height);
     void uploadAtlases();
     int pickNode(float x, float y) const; // Document node under a logical point, -1 if none
+    bool selectedBox(NodeBox& out) const;  // drawn box of the selected source node (the first one: list rows repeat)
+    void startDrag(int kind, int handle, float mx, float my);
+    void applyDrag(float dx, float dy, bool fine); // logical units since the drag started
 
     SDL_Renderer* m_renderer = nullptr;
     SDL_Texture* m_target = nullptr;
@@ -122,7 +127,13 @@ private:
     bool m_textActive = false;
 
     int m_resolution = 0;     // index into the presets in App.cpp
-    bool m_interact = false;  // preview gets the mouse (buttons, sliders) instead of selecting nodes
+    bool m_interact = false;
+    float m_zoom = 1.0f, m_panX = 0.0f, m_panY = 0.0f; // 1 = the resolution fits the panel; pan in panel pixels
+    int m_drag = 0;          // 0 none, 1 move, 2 resize, 3 pan
+    int m_handle = 0;        // resize: 1 left 2 right 4 top 8 bottom
+    bool m_dragArmed = false; // a move starts only after the mouse went a few pixels
+    float m_dragStart[2] = {}, m_startPos[2] = {}, m_startSize[2] = {};
+    std::string m_dragBefore; // text before the drag (one undo step)  // preview gets the mouse (buttons, sliders) instead of selecting nodes
     std::vector<std::string> m_actions; // actions fired in the preview (newest last)
     std::string m_status;
     double m_statusTime = 0.0, m_time = 0.0;
