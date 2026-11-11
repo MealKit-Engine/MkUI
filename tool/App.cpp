@@ -5,6 +5,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -400,6 +401,7 @@ void App::frame(double dt) {
     if (m_project.empty()) drawStart();
     else {
         drawFiles();
+        drawLibrary();
         drawTree();
         drawProperties();
         drawText();
@@ -407,6 +409,7 @@ void App::frame(double dt) {
         drawPreview(dt);
     }
     drawUnsavedDialog();
+    drawNameDialog();
 }
 
 void App::layoutDocks(unsigned dockspace) {
@@ -421,6 +424,7 @@ void App::layoutDocks(unsigned dockspace) {
     ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.6f, nullptr, &left);
     ImGuiID rightBottom = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.55f, nullptr, &right);
     ImGui::DockBuilderDockWindow("Files", left);
+    ImGui::DockBuilderDockWindow("Library", left);
     ImGui::DockBuilderDockWindow("Tree", leftBottom);
     ImGui::DockBuilderDockWindow("Properties", right);
     ImGui::DockBuilderDockWindow("Source", rightBottom);
@@ -433,6 +437,7 @@ void App::drawMenu() {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open project folder...")) SDL_ShowOpenFolderDialog(folderPicked, this, static_cast<SDL_Window*>(window), nullptr, false);
+        if (ImGui::MenuItem("New screen...", nullptr, false, !m_project.empty())) m_nameDialog = 1;
         if (ImGui::MenuItem("Save", "Ctrl+S", false, !m_file.empty())) save();
         if (ImGui::MenuItem("Reload from disk", nullptr, false, !m_file.empty())) reloadFromDisk();
         ImGui::Separator();
@@ -481,6 +486,8 @@ void App::drawStart() {
 
 void App::drawFiles() {
     ImGui::Begin("Files");
+    if (ImGui::SmallButton("New screen")) m_nameDialog = 1;
+    ImGui::SameLine();
     if (ImGui::SmallButton("Refresh")) scanFiles();
     for (const std::string& f : m_files) {
         const std::string label = f.substr(3); // without "ui/"
@@ -519,23 +526,6 @@ void App::drawTree() {
         const bool editable = m_sourceError.empty() && !m_source.exported;
         ImGui::BeginDisabled(!editable);
         const SourceNode* sel = m_hasSelection ? findNode(m_source, m_selected) : nullptr;
-        auto add = [&](const char* kind, std::vector<std::string> lines) {
-            Path parent = m_hasSelection ? m_selected : Path{};
-            const SourceNode* p = findNode(m_source, parent);
-            if (p && p->kind != "board" && p->kind != "frame" && !parent.empty()) parent.pop_back(); // text/image/use: next to it
-            SourceNode n;
-            n.kind = kind;
-            n.name = uniqueName(m_source, kind);
-            for (std::string& l : lines) n.items.push_back(SourceItem{std::move(l), -1});
-            snapshot();
-            m_selected = addNode(m_source, parent, 0xFFFFFFFFu, std::move(n));
-            m_hasSelection = true;
-            sourceEdited();
-        };
-        if (ImGui::SmallButton("+ Frame")) add("frame", {"size 200 100", "fill #FFFFFF33"});
-        ImGui::SameLine();
-        if (ImGui::SmallButton("+ Text")) add("text", {"size hug hug", "text Text", "fontSize 32"});
-        ImGui::SameLine();
         ImGui::BeginDisabled(!sel || m_selected.empty());
         if (ImGui::SmallButton("Delete")) {
             snapshot();
@@ -544,7 +534,19 @@ void App::drawTree() {
             sourceEdited();
         }
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!sel || sel->kind != "frame" || m_selected.empty());
+        if (ImGui::SmallButton("Make component")) m_nameDialog = 2;
+        ImGui::SetItemTooltip("Moves this frame into ui/components/<name>.ui and leaves a \"use\" here");
         ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        if (sel && sel->kind == "use" && sel->args.rfind("ui/", 0) == 0) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Edit component")) {
+                m_pendingFile = sel->args;
+                if (guardUnsaved(2)) openFile(m_pendingFile);
+            }
+        }
         if (m_source.exported) ImGui::TextDisabled("Penpot export: read-only");
         ImGui::Separator();
         ImGui::BeginChild("tree");
@@ -686,6 +688,231 @@ void App::drawUnsavedDialog() {
         m_pendingAction = 0;
         ImGui::CloseCurrentPopup();
     }
+    ImGui::EndPopup();
+}
+
+// ---------------------------------------------------------------- Library, components, new screens
+
+namespace {
+
+struct Widget {
+    const char* label;
+    const char* tooltip;
+    const char* text; // the node as .ui lines
+};
+
+// Same widgets as the MealKit editor's library. Plain colors (not $tokens) so any theme takes them; field and action names are
+// placeholders (a missing field shows under Problems once a view model is bound)
+const Widget kWidgets[] = {
+    {"Panel", "A box that lines its children up in a column (padding, gap, rounded corners)",
+     "frame panel\n  size 420 hug\n  layout column\n  gap 12\n  padding 24\n  fill #1B2130E6\n  radius 14\nend\n"},
+    {"Text", "A line of text. {field} in it shows a view model value", "text label\n  content Text\n  fontSize 28\n  color #FFFFFF\nend\n"},
+    {"Image", "A picture from assets (set src to a PNG path)", "image image\n  size 96 96\nend\n"},
+    {"Button", "A button that sends an action when pressed",
+     "frame button\n  size 280 60\n  layout row\n  justify center\n  align center\n  fill #3B6FE0\n  radius 10\n  button confirm\n"
+     "  on hover fill #5585F0\n  on pressed fill #2C58B8\n  on focus stroke 3 #FFFFFF\n  text buttonLabel\n    content Button\n    fontSize 26\n"
+     "    color #FFFFFF\n  end\nend\n"},
+    {"Toggle", "An on/off switch for a bool field",
+     "frame toggleRow\n  size hug hug\n  layout row\n  align center\n  gap 14\n  frame toggle\n    size 64 32\n    radius 16\n    fill #FFFFFF26\n"
+     "    toggle enabled\n    on checked fill #3B6FE0\n    frame knobOff\n      pos 4 4\n      size 24 24\n      radius 12\n      fill #FFFFFF\n"
+     "      visible !enabled\n    end\n    frame knobOn\n      pos 36 4\n      size 24 24\n      radius 12\n      fill #FFFFFF\n      visible enabled\n"
+     "    end\n  end\n  text toggleLabel\n    content Option\n    fontSize 24\n    color #FFFFFF\n  end\nend\n"},
+    {"Slider", "Drag to set a float field between a minimum and a maximum",
+     "frame slider\n  size 320 28\n  radius 14\n  fill #FFFFFF26\n  clip\n  slider value01 0 1 0.01\n  on hover stroke 2 #FFFFFF40\n"
+     "  frame sliderFill\n    size fill fill\n    widthRatio value01\n    radius 14\n    fill #3B6FE0\n  end\nend\n"},
+    {"Progress bar", "A bar filled by a float field from 0 to 1 (health, loading)",
+     "frame progress\n  size 320 20\n  radius 10\n  fill #FFFFFF1A\n  clip\n  frame progressFill\n    size fill fill\n    widthRatio progress\n"
+     "    radius 10\n    fill #4CC38A\n  end\nend\n"},
+    {"Text input", "A box the player types into (a string field)",
+     "frame inputBox\n  size 360 52\n  layout row\n  align center\n  padding 0 16\n  fill #00000055\n  stroke 1 #FFFFFF33\n  radius 10\n"
+     "  text input\n    size fill hug\n    textInput text\n    maxLength 32\n    fontSize 24\n    color #FFFFFF\n    maxLines 1\n  end\nend\n"},
+    {"List", "Repeats its first child for every element of a list field",
+     "frame list\n  size 420 hug\n  layout column\n  gap 6\n  list items\n  frame row\n    size fill 48\n    layout row\n    align center\n"
+     "    padding 0 14\n    radius 8\n    fill #FFFFFF0A\n    text rowName\n      content {name}\n      fontSize 22\n      color #FFFFFF\n    end\n  end\nend\n"},
+    {"Scroll area", "Clips its content and scrolls it with the wheel or the gamepad",
+     "frame scrollArea\n  size 420 300\n  scroll\n  frame content\n    size fill hug\n    layout column\n    gap 8\n  end\nend\n"},
+};
+
+// Where a new node may go inside: the board, or a frame with a layout that isn't itself a widget (a button, a toggle row, a text
+// box). Anything else gets the node beside it, so Button twice gives two buttons, not a button in a button
+bool isContainer(const SourceNode& n) {
+    if (n.kind == "board") return true;
+    std::string v;
+    if (n.kind != "frame" || !getProperty(n, "layout", v)) return false;
+    for (const char* w : {"button", "toggle", "slider", "select", "list"})
+        if (getProperty(n, w, v)) return false;
+    for (const SourceNode& c : n.children)
+        for (const char* w : {"toggle", "textInput", "widthRatio", "select"})
+            if (getProperty(c, w, v)) return false;
+    return true;
+}
+
+bool validName(const std::string& s) {
+    if (s.empty() || s.size() > 48) return false;
+    for (char c : s)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')) return false;
+    return true;
+}
+
+} // namespace
+
+void App::insertNode(SourceNode node) {
+    if (m_source.root.children.empty() || !m_sourceError.empty() || m_source.exported) return;
+    // Names unique in the file, the subtree's own names included
+    struct Rename {
+        const Source& source;
+        std::vector<std::string> taken;
+        void run(SourceNode& n) {
+            std::string name = uniqueName(source, n.name);
+            for (int k = 2; std::find(taken.begin(), taken.end(), name) != taken.end(); ++k) name = uniqueName(source, n.name + std::to_string(k));
+            taken.push_back(name);
+            n.name = name;
+            for (SourceNode& c : n.children) run(c);
+        }
+    } rename{m_source, {}};
+    rename.run(node);
+    Path into;
+    u32 at = 0xFFFFFFFFu;
+    if (m_hasSelection) {
+        const SourceNode* sel = findNode(m_source, m_selected);
+        if (sel && isContainer(*sel)) into = m_selected;
+        else if (!m_selected.empty()) {
+            into.assign(m_selected.begin(), m_selected.end() - 1);
+            at = m_selected.back() + 1;
+        }
+    }
+    snapshot();
+    m_selected = addNode(m_source, into, at, std::move(node));
+    m_hasSelection = true;
+    sourceEdited();
+}
+
+bool App::makeComponent(const std::string& name) {
+    const SourceNode* n = m_hasSelection ? findNode(m_source, m_selected) : nullptr;
+    NodeBox b{};
+    if (!n || n->kind != "frame" || m_selected.empty() || !selectedBox(b)) return false;
+    const std::string asset = "ui/components/" + name + ".ui";
+    const std::filesystem::path file = m_host.assets / pathOf(asset);
+    std::error_code ec;
+    if (std::filesystem::exists(file, ec)) {
+        m_status = asset + " exists already";
+        m_statusTime = m_time;
+        return false;
+    }
+    const std::string before = m_text;
+    Source component;
+    if (!extractComponent(m_source, m_selected, name, asset, static_cast<i32>(b.w + 0.5f), static_cast<i32>(b.h + 0.5f), component)) {
+        m_status = "Only a frame can become a component";
+        m_statusTime = m_time;
+        textChanged(); // m_source back from the text
+        return false;
+    }
+    std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary);
+    out << writeSource(component);
+    if (!out) {
+        m_status = "Cannot write " + asset;
+        m_statusTime = m_time;
+        m_text = before;
+        textChanged();
+        return false;
+    }
+    out.close();
+    m_undo.push_back(before);
+    m_redo.clear();
+    sourceEdited();
+    scanFiles();
+    m_status = "Component " + asset + " (save the screen to keep the use)";
+    m_statusTime = m_time;
+    return true;
+}
+
+bool App::newScreen(const std::string& name) {
+    if (m_text != m_savedText) {
+        m_status = "Save the open screen first";
+        m_statusTime = m_time;
+        return false;
+    }
+    const std::string asset = "ui/" + name + ".ui";
+    const std::filesystem::path file = m_host.assets / pathOf(asset);
+    std::error_code ec;
+    if (std::filesystem::exists(file, ec)) {
+        m_status = asset + " exists already";
+        m_statusTime = m_time;
+        return false;
+    }
+    std::ofstream out(file, std::ios::binary);
+    out << "# MkUI screen: " << name << "\n@format ui 1\nboard " << name << " 1920 1080\n";
+    if (!out) {
+        m_status = "Cannot write " + asset;
+        m_statusTime = m_time;
+        return false;
+    }
+    out.close();
+    scanFiles();
+    return openFile(asset);
+}
+
+void App::drawLibrary() {
+    ImGui::Begin("Library");
+    const bool editable = !m_file.empty() && m_sourceError.empty() && !m_source.exported;
+    ImGui::BeginDisabled(!editable);
+    ImGui::TextDisabled("Widgets");
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float button = std::max(90.0f, (width - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
+    int column = 0;
+    for (const Widget& w : kWidgets) {
+        if (column++ % 2 && width >= button * 2) ImGui::SameLine();
+        if (ImGui::Button(w.label, ImVec2(button, 0))) {
+            SourceNode n;
+            if (parseNodeText(w.text, n)) insertNode(std::move(n));
+        }
+        ImGui::SetItemTooltip("%s", w.tooltip);
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("Components (ui/components)");
+    bool any = false;
+    for (const std::string& f : m_files) {
+        if (f.rfind("ui/components/", 0) != 0 || f == m_file) continue;
+        any = true;
+        const std::string base = utf8Of(pathOf(f).stem());
+        if (ImGui::Selectable(base.c_str())) {
+            SourceNode n;
+            n.kind = "use";
+            n.name = base;
+            n.args = f;
+            insertNode(std::move(n));
+        }
+        ImGui::SetItemTooltip("Adds \"use %s %s\": the component's look, placed here", base.c_str(), f.c_str());
+    }
+    if (!any) ImGui::TextDisabled("  none yet: select a frame, then Make component");
+    ImGui::EndDisabled();
+    ImGui::End();
+}
+
+void App::drawNameDialog() {
+    if (m_nameDialog) {
+        ImGui::OpenPopup("Name");
+        if (m_nameDialog == 2 && m_hasSelection)
+            if (const SourceNode* n = findNode(m_source, m_selected)) std::snprintf(m_nameInput, sizeof m_nameInput, "%s", n->name.c_str());
+        if (m_nameDialog == 1) m_nameInput[0] = 0;
+    }
+    static int kind = 0;
+    if (m_nameDialog) kind = m_nameDialog, m_nameDialog = 0;
+    if (!ImGui::BeginPopupModal("Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted(kind == 1 ? "New screen in assets/ui/ (letters, digits, _ and -)" : "Component file in assets/ui/components/");
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    const bool enter = ImGui::InputText("##name", m_nameInput, sizeof m_nameInput, ImGuiInputTextFlags_EnterReturnsTrue);
+    const bool ok = validName(m_nameInput);
+    ImGui::BeginDisabled(!ok);
+    if (ImGui::Button("Create") || (enter && ok)) {
+        if (kind == 1) newScreen(m_nameInput);
+        else makeComponent(m_nameInput);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 

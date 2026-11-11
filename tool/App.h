@@ -76,6 +76,11 @@ private:
     void drawFiles();
     void drawPreview(double dt);
     void drawTree();
+    void drawLibrary();
+    void drawNameDialog();
+    void insertNode(SourceNode node); // into the selected container, else after the selection, else at the end of the board
+    bool makeComponent(const std::string& name);
+    bool newScreen(const std::string& name);
     void drawTreeNode(const SourceNode& node, Path& path);
     void drawProperties();
     void drawText();
@@ -121,6 +126,8 @@ private:
     Path m_selected;
     bool m_hasSelection = false;
     char m_newProperty[128] = {};
+    int m_nameDialog = 0; // 1 new screen, 2 make component (popup asking for a name)
+    char m_nameInput[64] = {};
 
     std::deque<std::string> m_undo, m_redo;
     std::string m_lastSnapshot;
