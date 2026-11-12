@@ -48,3 +48,7 @@ endif()
 
 install(TARGETS MkUI RUNTIME DESTINATION .)
 install(FILES ${CMAKE_BINARY_DIR}/bin/mealkit-tool.txt DESTINATION .)
+
+if(WIN32)
+    target_sources(MkUI PRIVATE res/MkUI.rc) # app icon (engine docs/TOOL_DESIGN.md section 5)
+endif()
