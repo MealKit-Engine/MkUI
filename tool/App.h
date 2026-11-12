@@ -66,8 +66,11 @@ public:
     void showWindow(const std::string& name) { m_showWindow = name; } // brings a docked tab forward on the next frame
     void followFirstGame() { m_followFirst = true; }                 // follow the first running game found (--follow)
     void* window = nullptr;                          // SDL_Window* (dialog parent)
+    bool iconFont = false; // the Segoe icon font merged into the UI font (main.cpp loadFont)
 
 private:
+    // Flat square icon button with its name in the tooltip (engine docs/TOOL_DESIGN.md section 1); the name as the label without the icon font
+    bool iconButton(const char* glyph, const char* name, bool small = false);
     using Path = SourcePath;
 
     bool openProject(const std::string& dir);

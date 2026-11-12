@@ -22,6 +22,7 @@ add_executable(MkUI WIN32 main.cpp App.h App.cpp PenpotServer.h PenpotServer.cpp
 target_link_libraries(MkUI PRIVATE mkui mkui_imgui mkcontract_client SDL3::SDL3-static) # mkcontract_client: live connection to running games
 if(WIN32)
     target_link_libraries(MkUI PRIVATE ws2_32) # Penpot plugin server sockets
+    target_link_libraries(MkUI PRIVATE dwmapi) # editor-colored title bar
 endif()
 # Penpot plugin files (penpot-plugin/dist, committed) next to the exe as penpot/: the Designer serves them
 add_custom_command(TARGET MkUI POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../penpot-plugin/dist ${CMAKE_BINARY_DIR}/bin/penpot)

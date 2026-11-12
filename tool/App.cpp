@@ -49,6 +49,12 @@ constexpr Resolution kResolutions[] = {
 
 // Glyph SDF value → alpha. The engine's shader sharpens by the drawn size (sdfScale); a fixed ramp around 0.5 is enough here
 constexpr float kGlyphRamp = 5.0f;
+// Glyphs from engine docs/TOOL_DESIGN.md section 2 (Segoe Fluent Icons / MDL2 Assets)
+constexpr const char* kIconAdd = "\xEE\x9C\x90";     // U+E710
+constexpr const char* kIconRemove = "\xEE\x9C\xB8";  // U+E738 remove from a list
+constexpr const char* kIconRefresh = "\xEE\x9C\xAC"; // U+E72C
+constexpr const char* kIconCopy = "\xEE\xA3\x88";    // U+E8C8
+constexpr const char* kIconEdit = "\xEE\x9C\x8F";    // U+E70F
 
 int stringCallback(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
@@ -551,14 +557,27 @@ void App::drawStart() {
     ImGui::End();
 }
 
+bool App::iconButton(const char* glyph, const char* name, bool small) {
+    const std::string label = std::string(iconFont ? glyph : name) + "##" + name;
+    // Flat like the editor's icon buttons: clear until hovered
+    if (iconFont) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered));
+    }
+    const bool pressed = small ? ImGui::SmallButton(label.c_str()) : iconFont ? ImGui::Button(label.c_str(), {ImGui::GetFrameHeight(), 0}) : ImGui::Button(label.c_str());
+    if (iconFont) ImGui::PopStyleColor(2);
+    if (iconFont && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", name);
+    return pressed;
+}
+
 void App::drawFiles() {
     ImGui::Begin("Files");
-    if (ImGui::SmallButton("New screen")) m_nameDialog = 1;
+    if (iconButton(kIconAdd, "New screen", true)) m_nameDialog = 1;
     ImGui::SameLine();
-    if (ImGui::SmallButton("Refresh")) scanFiles();
+    if (iconButton(kIconRefresh, "Refresh", true)) scanFiles();
     if (m_penpot.running()) {
         ImGui::SameLine();
-        if (ImGui::SmallButton("Penpot plugin")) {
+        if (iconButton(kIconCopy, "Copy the Penpot plugin address", true)) {
             ImGui::SetClipboardText(m_penpot.pluginUrl().c_str());
             m_status = "Copied the Penpot plugin address: in Penpot, Plugins > Install, paste it";
             m_statusTime = m_time;
@@ -603,7 +622,7 @@ void App::drawTree() {
         ImGui::BeginDisabled(!editable);
         const SourceNode* sel = m_hasSelection ? findNode(m_source, m_selected) : nullptr;
         ImGui::BeginDisabled(!sel || m_selected.empty());
-        if (ImGui::SmallButton("Delete")) {
+        if (iconButton(kIconRemove, "Delete node", true)) {
             snapshot();
             removeNode(m_source, m_selected);
             m_hasSelection = false;
@@ -618,7 +637,7 @@ void App::drawTree() {
         ImGui::EndDisabled();
         if (sel && sel->kind == "use" && sel->args.rfind("ui/", 0) == 0) {
             ImGui::SameLine();
-            if (ImGui::SmallButton("Edit component")) {
+            if (iconButton(kIconEdit, "Edit component", true)) {
                 m_pendingFile = sel->args;
                 if (guardUnsaved(2)) openFile(m_pendingFile);
             }
@@ -1058,7 +1077,7 @@ void App::drawProperties() {
         // n may move when sourceEdited re-reads the text: the next lines use the fresh node
         n = findNode(m_source, m_selected);
         ImGui::SameLine();
-        if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0))) remove = static_cast<int>(i);
+        if (iconButton(kIconRemove, "Remove")) remove = static_cast<int>(i);
         ImGui::PopID();
         if (!n || i >= n->items.size()) break;
     }
