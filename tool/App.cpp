@@ -1134,7 +1134,7 @@ void App::drawProblems() {
     if (!m_sourceError.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", m_sourceError.c_str());
     if (m_screen != kNoScreen)
         for (const std::string& e : m_ui->info(m_screen).errors) ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "%s", e.c_str());
-    for (const std::string& w : m_host.warnings) ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.4f, 1), "%s", w.c_str());
+    for (const std::string& w : m_host.warnings) ImGui::TextColored(ImVec4(0.949f, 0.580f, 0.137f, 1.0f), "%s", w.c_str());
     if (!m_actions.empty()) {
         ImGui::Separator();
         for (auto it = m_actions.rbegin(); it != m_actions.rend(); ++it) ImGui::TextDisabled("action %s", it->c_str());
