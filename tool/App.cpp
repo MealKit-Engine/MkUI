@@ -1,4 +1,5 @@
 #include "App.h"
+#include "Form.h"
 #include "Strings.h"
 
 #include <mkcontract/User.h>
@@ -16,6 +17,7 @@
 #include <sstream>
 
 namespace mkui::tool {
+namespace form = mktool::form;
 
 namespace {
 
@@ -704,8 +706,14 @@ void App::drawTreeNode(const SourceNode& node, Path& path) {
     if (node.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
     if (selected) flags |= ImGuiTreeNodeFlags_Selected;
     ImGui::PushID(static_cast<int>(path.empty() ? -1 : static_cast<int>(path.back())));
-    const bool open = ImGui::TreeNodeEx("##n", flags, "%s %s", node.kind.c_str(), node.name.c_str());
+    const bool open = ImGui::TreeNodeEx("##n", flags, "%s", node.name.empty() ? node.kind.c_str() : node.name.c_str());
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) m_selected = path, m_hasSelection = true;
+    if (!node.name.empty()) { // the kind (frame, text, ...) in secondary gray at the right end of the row
+        const ImVec2 rowMax = ImGui::GetItemRectMax();
+        const ImVec2 kindSize = ImGui::CalcTextSize(node.kind.c_str());
+        ImGui::GetWindowDrawList()->AddText(ImVec2(rowMax.x - kindSize.x - ImGui::GetStyle().FramePadding.x, ImGui::GetItemRectMin().y + ImGui::GetStyle().FramePadding.y),
+                                            ImGui::GetColorU32(ImGuiCol_TextDisabled), node.kind.c_str());
+    }
     if (open) {
         for (u32 i = 0; i < node.children.size(); ++i) {
             path.push_back(i);
@@ -844,7 +852,8 @@ bool App::drawInspector(SourceNode& node) {
     auto combo = [&](const char* label, const char* key, const char* const* options, size_t count) {
         std::string v;
         const bool has = getProperty(node, key, v);
-        if (ImGui::BeginCombo(label, has ? v.c_str() : tr("(default)"))) {
+        form::label(label);
+        if (ImGui::BeginCombo((std::string("##") + key).c_str(), has ? v.c_str() : tr("(default)"))) {
             if (ImGui::Selectable(tr("(default)"), !has) && has) unset(key);
             for (size_t i = 0; i < count; ++i)
                 if (ImGui::Selectable(options[i], has && v == options[i])) set(key, options[i]);
@@ -855,11 +864,13 @@ bool App::drawInspector(SourceNode& node) {
         std::string v;
         const bool has = getProperty(node, key, v);
         std::vector<float> n = has ? numbers(v) : std::vector<float>{fallback};
+        form::label(label);
         if (n.size() != 1) {
-            ImGui::TextDisabled("%s  %s %s", label, key, v.c_str()); // a $token or a binding word
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s %s", key, v.c_str()); // a $token or a binding word
             return;
         }
-        if (ImGui::DragFloat(label, &n[0], speed, lo, hi, format, ImGuiSliderFlags_AlwaysClamp)) set(key, num(n[0]));
+        if (ImGui::DragFloat((std::string("##") + key).c_str(), &n[0], speed, lo, hi, format, ImGuiSliderFlags_AlwaysClamp)) set(key, num(n[0]));
     };
     NodeBox drawn{};
     const bool hasBox = selectedBox(drawn);
@@ -871,11 +882,14 @@ bool App::drawInspector(SourceNode& node) {
     }
 
     // ---- Layout: position, size modes, anchors
-    ImGui::SeparatorText(tr("Layout"));
+    form::section(tr("Layout"));
     if (placedByLayout) ImGui::TextDisabled(tr("Placed by the parent's layout (%s)"), words(parentLayout).empty() ? "" : words(parentLayout)[0].c_str());
     else if (node.kind != "board") {
         std::vector<float> pos = getProperty(node, "pos", value) ? numbers(value) : std::vector<float>{0.0f, 0.0f};
-        if (pos.size() == 2 && ImGui::DragFloat2(tr("Position"), pos.data(), 1.0f, 0.0f, 0.0f, "%.0f")) set("pos", num(std::round(pos[0])) + " " + num(std::round(pos[1])));
+        if (pos.size() == 2) {
+            form::label(tr("Position"));
+            if (ImGui::DragFloat2("##pos", pos.data(), 1.0f, 0.0f, 0.0f, "%.0f")) set("pos", num(std::round(pos[0])) + " " + num(std::round(pos[1])));
+        }
     }
     if (node.kind != "board" && (node.kind != "use" || getProperty(node, "size", value))) {
         std::vector<std::string> parts = getProperty(node, "size", value) ? words(value) : std::vector<std::string>{};
@@ -889,9 +903,9 @@ bool App::drawInspector(SourceNode& node) {
             ImGui::PushID(axis);
             std::string& p = parts[static_cast<size_t>(axis)];
             const int mode = p == "hug" ? 1 : p == "fill" ? 2 : 0;
-            const float full = ImGui::CalcItemWidth();
+            const float full = form::label(axis == 0 ? tr("Width") : tr("Height"));
             ImGui::SetNextItemWidth(mode == 0 ? full * 0.5f : full);
-            if (ImGui::BeginCombo(mode == 0 ? "##mode" : axis == 0 ? tr("Width") : tr("Height"), modes[mode])) {
+            if (ImGui::BeginCombo("##mode", modes[mode])) {
                 for (int m = 0; m < 3; ++m) {
                     if (ImGui::Selectable(modes[m], m == mode) && m != mode) {
                         p = m == 1 ? "hug" : m == 2 ? "fill" : num(std::round(hasBox ? (axis == 0 ? drawn.w : drawn.h) : 100.0f));
@@ -907,7 +921,7 @@ bool App::drawInspector(SourceNode& node) {
                 float v = 0;
                 if (!isNumber(p, v)) {
                     ImGui::TextDisabled("%s", p.c_str());
-                } else if (ImGui::DragFloat(axis == 0 ? tr("Width") : tr("Height"), &v, 1.0f, 0.0f, 100000.0f, "%.0f")) {
+                } else if (ImGui::DragFloat("##size", &v, 1.0f, 0.0f, 100000.0f, "%.0f")) {
                     p = num(std::round(v));
                     sizeChanged = true;
                 }
@@ -927,6 +941,7 @@ bool App::drawInspector(SourceNode& node) {
         const char* hs[] = {"left", "center", "right"};
         const char* vs[] = {"top", "center", "bottom"};
         const float s = ImGui::GetFrameHeight() * 0.8f;
+        form::label(tr("Anchor"));
         const ImVec2 start = ImGui::GetCursorScreenPos();
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 3; ++col) {
@@ -944,9 +959,9 @@ bool App::drawInspector(SourceNode& node) {
         const float x = start.x + 3.0f * (s + 2.0f) + 8.0f;
         for (int axis = 0; axis < 2; ++axis) {
             ImGui::SetCursorScreenPos(ImVec2(x, start.y + axis * (ImGui::GetFrameHeight() + 4.0f)));
-            ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetFontSize() * 7.0f));
+            ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x - x));
             ImGui::PushID(10 + axis);
-            if (ImGui::BeginCombo(axis == 0 ? tr("Anchor") : "##v", c[static_cast<size_t>(axis)].c_str())) {
+            if (ImGui::BeginCombo("##anchor", c[static_cast<size_t>(axis)].c_str())) {
                 for (const char* o : axis == 0 ? hAll : vAll)
                     if (ImGui::Selectable(o, c[static_cast<size_t>(axis)] == o)) c[static_cast<size_t>(axis)] = o, write();
                 ImGui::EndCombo();
@@ -958,7 +973,10 @@ bool App::drawInspector(SourceNode& node) {
         ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + std::max(3.0f * (s + 2.0f), 2.0f * (ImGui::GetFrameHeight() + 4.0f)) + 2.0f));
         ImGui::Dummy(ImVec2(1, 1));
     }
-    if (hasBox) ImGui::TextDisabled(tr("Drawn at %.0f, %.0f  size %.0f x %.0f"), drawn.x, drawn.y, drawn.w, drawn.h);
+    if (hasBox) {
+        form::label("");
+        ImGui::TextDisabled(tr("Drawn at %.0f, %.0f  size %.0f x %.0f"), drawn.x, drawn.y, drawn.w, drawn.h);
+    }
 
     // ---- Children's layout (frames and the board)
     if (node.kind == "frame" || node.kind == "board") {
@@ -966,7 +984,8 @@ bool App::drawInspector(SourceNode& node) {
         const bool hasLayout = getProperty(node, "layout", layout);
         const std::vector<std::string> parts = words(layout);
         const std::string kind = parts.empty() ? std::string() : parts[0];
-        if (ImGui::BeginCombo(tr("Children"), hasLayout ? kind.c_str() : tr("free (pos)"))) {
+        form::label(tr("Children"));
+        if (ImGui::BeginCombo("##children", hasLayout ? kind.c_str() : tr("free (pos)"))) {
             if (ImGui::Selectable(tr("free (pos)"), !hasLayout) && hasLayout) unset("layout");
             for (const char* k : {"row", "column", "grid"})
                 if (ImGui::Selectable(k, kind == k) && kind != k) {
@@ -980,6 +999,7 @@ bool App::drawInspector(SourceNode& node) {
         ImGui::SetItemTooltip(tr("How the children are placed. Free: each by its own pos"));
         if (hasLayout && kind != "grid") {
             bool wrap = std::find(parts.begin(), parts.end(), "wrap") != parts.end();
+            form::label("");
             if (checkbox(tr("Wrap"), &wrap)) {
                 std::string line = kind;
                 for (size_t i = 1; i < parts.size(); ++i)
@@ -996,28 +1016,39 @@ bool App::drawInspector(SourceNode& node) {
         std::vector<float> p = getProperty(node, "padding", pad) ? numbers(pad) : std::vector<float>{0.0f};
         if (p.size() == 2) p = {p[0], p[1], p[0], p[1]};
         if (p.size() == 1) p = {p[0], p[0], p[0], p[0]};
+        form::label(tr("Padding"));
         if (p.size() == 4) {
-            if (ImGui::DragFloat4(tr("Padding"), p.data(), 0.5f, 0.0f, 10000.0f, "%.0f")) {
+            if (ImGui::DragFloat4("##padding", p.data(), 0.5f, 0.0f, 10000.0f, "%.0f")) {
                 const bool same = p[0] == p[1] && p[1] == p[2] && p[2] == p[3];
                 set("padding", same ? num(p[0]) : num(p[0]) + " " + num(p[1]) + " " + num(p[2]) + " " + num(p[3]));
             }
             ImGui::SetItemTooltip(tr("top, right, bottom, left"));
-        } else ImGui::TextDisabled(tr("Padding  %s"), pad.c_str());
+        } else {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", pad.c_str());
+        }
     }
 
     // ---- Style
-    if (node.kind != "board" || getProperty(node, "fill", value)) ImGui::SeparatorText(tr("Style"));
+    if (node.kind != "board" || getProperty(node, "fill", value)) form::section(tr("Style"));
     for (const char* key : {"fill", "color"}) {
         if (!getProperty(node, key, value)) continue;
         const char* label = key == std::string("fill") ? tr("Fill") : tr("Text color");
         float rgba[4];
+        form::label(label);
         if (parseHex(value, rgba)) {
-            if (ImGui::ColorEdit4(label, rgba, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf))
+            if (ImGui::ColorEdit4((std::string("##") + key).c_str(), rgba, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf))
                 set(key, hex(rgba, value.size() == 9 || rgba[3] < 1.0f));
-        } else ImGui::TextDisabled("%s  %s", label, value.c_str()); // $token
+        } else {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", value.c_str()); // $token
+        }
     }
     if (node.kind != "board" && node.kind != "use") {
-        if (!getProperty(node, "fill", value) && node.kind == "frame" && ImGui::SmallButton(tr("Add fill"))) set("fill", "#FFFFFF33");
+        if (!getProperty(node, "fill", value) && node.kind == "frame") {
+            form::label(tr("Fill"));
+            if (ImGui::Button(tr("Add fill"))) set("fill", "#FFFFFF33");
+        }
         if (node.kind == "frame" || node.kind == "image") number(tr("Corner radius"), "radius", 0.0f, 0.5f, 0.0f, 10000.0f, "%.0f");
         number(tr("Opacity"), "opacity", 1.0f, 0.01f, 0.0f, 1.0f, "%.2f");
     }
@@ -1031,7 +1062,7 @@ bool App::drawInspector(SourceNode& node) {
         listAssets(m_host.assets / "fonts", "", {".ttf", ".otf"}, false, m_fontFiles);
     }
     if (node.kind == "text") {
-        ImGui::SeparatorText(tr("Text"));
+        form::section(tr("Text"));
         std::string content;
         if (getProperty(node, "content", content)) {
             ImGui::SetNextItemWidth(-1);
@@ -1041,7 +1072,8 @@ bool App::drawInspector(SourceNode& node) {
         number(tr("Font size"), "fontSize", 24.0f, 0.25f, 1.0f, 1000.0f, "%.0f");
         std::string font;
         const bool hasFont = getProperty(node, "font", font);
-        if (ImGui::BeginCombo(tr("Font"), hasFont ? font.c_str() : tr("(default)"))) {
+        form::label(tr("Font"));
+        if (ImGui::BeginCombo("##font", hasFont ? font.c_str() : tr("(default)"))) {
             if (ImGui::Selectable(tr("(default)"), !hasFont) && hasFont) unset("font");
             if (m_fontFiles.empty()) ImGui::TextDisabled(tr("No .ttf or .otf in assets/fonts"));
             for (const std::string& f : m_fontFiles)
@@ -1049,13 +1081,17 @@ bool App::drawInspector(SourceNode& node) {
             ImGui::EndCombo();
         }
         combo(tr("Text align"), "textAlign", kTextAlign, std::size(kTextAlign));
-        if (!getProperty(node, "color", value) && ImGui::SmallButton(tr("Set text color"))) set("color", "#FFFFFF");
+        if (!getProperty(node, "color", value)) {
+            form::label(tr("Text color"));
+            if (ImGui::Button(tr("Set text color"))) set("color", "#FFFFFF");
+        }
     }
     if (node.kind == "image") {
-        ImGui::SeparatorText(tr("Image"));
+        form::section(tr("Image"));
         std::string src;
         const bool has = getProperty(node, "src", src);
-        if (ImGui::BeginCombo(tr("Image file"), has ? src.c_str() : tr("(none)"), ImGuiComboFlags_HeightLarge)) {
+        form::label(tr("Image file"));
+        if (ImGui::BeginCombo("##src", has ? src.c_str() : tr("(none)"), ImGuiComboFlags_HeightLarge)) {
             if (m_imageFiles.empty()) ImGui::TextDisabled(tr("No pictures in assets/ui or assets/textures yet"));
             for (const std::string& f : m_imageFiles)
                 if (ImGui::Selectable(f.c_str(), has && f == src)) set("src", f);
@@ -1085,8 +1121,9 @@ bool App::drawInspector(SourceNode& node) {
                 current = i;
                 break;
             }
-        ImGui::SeparatorText(tr("Behaviour"));
-        if (ImGui::BeginCombo(tr("Kind"), current < 0 ? tr("None (just drawn)") : kinds[current].label)) {
+        form::section(tr("Behaviour"));
+        form::label(tr("Kind"));
+        if (ImGui::BeginCombo("##kind", current < 0 ? tr("None (just drawn)") : kinds[current].label)) {
             if (ImGui::Selectable(tr("None (just drawn)"), current < 0) && current >= 0) unset(kinds[current].key);
             for (int i = 0; i < static_cast<int>(std::size(kinds)); ++i) {
                 if (kinds[i].text != (node.kind == "text")) continue;
@@ -1110,7 +1147,8 @@ bool App::drawInspector(SourceNode& node) {
             bool edited = false;
             for (size_t i = 0; i < names.size(); ++i) {
                 ImGui::PushID(static_cast<int>(i));
-                if (inputLine(names[i], w[i])) edited = true;
+                form::label(names[i]);
+                if (inputLine((std::string("##") + names[i]).c_str(), w[i])) edited = true;
                 ImGui::PopID();
             }
             if (key == "button") ImGui::TextDisabled(tr("Game code reads the action from ctx.ui.actions()"));
@@ -1147,9 +1185,7 @@ void App::drawProperties() {
         }
         return changed;
     };
-    ImGui::Text("%s", n->kind.c_str());
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
+    form::label(n->kind.c_str());
     field("##name", n->name);
     n = findNode(m_source, m_selected);
     if (n) {
@@ -1165,7 +1201,7 @@ void App::drawProperties() {
         }
         if (!ImGui::IsAnyItemActive()) m_inspectorActive = false;
     }
-    ImGui::SeparatorText(tr("All lines"));
+    form::section(tr("All lines"));
     if (!n) {
         ImGui::EndDisabled();
         ImGui::End();
@@ -1854,7 +1890,7 @@ void App::drawLive() {
         if (!takeLiveValues(m_live[m_follow], true)) m_follow = -1, m_liveStatus = tr("Follow stopped: the screen isn't open there");
     }
 
-    ImGui::SeparatorText(tr("From a running game"));
+    form::section(tr("From a running game"));
     if (m_live.empty()) {
         ImGui::TextDisabled(tr("None running for this project. Start the game or press Play in the editor;"));
         ImGui::TextDisabled(tr("saved .ui files reload there by themselves."));
