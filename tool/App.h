@@ -67,10 +67,16 @@ public:
     void followFirstGame() { m_followFirst = true; }                 // follow the first running game found (--follow)
     void* window = nullptr;                          // SDL_Window* (dialog parent)
     bool iconFont = false; // the Segoe icon font merged into the UI font (main.cpp loadFont)
+    std::string languageOverride; // --lang: used instead of the suite language, which isn't followed then
 
 private:
     // Flat square icon button with its name in the tooltip (engine docs/TOOL_DESIGN.md section 1); the name as the label without the icon font
     bool iconButton(const char* glyph, const char* name, bool small = false);
+    // Language icon at the right end of the menu bar: the languages by their own names (engine docs/TOOL_DESIGN.md section 4 "Language")
+    void drawLanguageButton();
+    // Panel tab title "glyph  Name###Name" (engine docs/TOOL_DESIGN.md section 1 "Panel tabs"): the id after ### stays the same in every
+    // language and without the icon font, so the saved dock layout keeps working
+    std::string panelTitle(const char* glyph, const char* name) const;
     using Path = SourcePath;
 
     bool openProject(const std::string& dir);

@@ -1,4 +1,7 @@
 #include "App.h"
+#include "Strings.h"
+
+#include <mkcontract/User.h>
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -15,6 +18,77 @@
 namespace mkui::tool {
 
 namespace {
+
+// Panel tabs (engine docs/TOOL_DESIGN.md section 2 "Panels")
+constexpr const char* kIconFolder = "\xEE\xA2\xB7";    // U+E8B7 Files
+constexpr const char* kIconLibrary = "\xEE\xA3\xB1";   // U+E8F1
+constexpr const char* kIconTree = "\xEE\xA3\xBD";      // U+E8FD
+constexpr const char* kIconInspector = "\xEE\xA7\xA9"; // U+E9E9 Properties
+constexpr const char* kIconData = "\xEE\xA3\xAF";      // U+E8EF Values
+constexpr const char* kIconCode = "\xEE\xA5\x83";      // U+E943 Source
+constexpr const char* kIconWarning = "\xEE\x9E\xBA";   // U+E7BA Problems
+constexpr const char* kIconPreview = "\xEE\x9F\xB4";   // U+E7F4
+constexpr const char* kIconLanguage = "\xEF\x8A\xB7";  // U+F2B7 LocaleLanguage
+
+// Checkbox and radio colors (engine docs/TOOL_DESIGN.md 3.1, 3.2): a gray 4 box on a gray 2 panel is about 1.25:1, so an unchecked
+// box gets a gray 9 outline (gray 11 hovered) and a checked one the accent fill with a gray 12 mark. Same as MkRender tool/App.cpp
+const ImVec4 kControlOutline(0x8A / 255.0f, 0x8A / 255.0f, 0x8A / 255.0f, 1.0f);      // gray 9
+const ImVec4 kControlOutlineHover(0xAF / 255.0f, 0xAF / 255.0f, 0xAF / 255.0f, 1.0f); // gray 11
+const ImVec4 kControlMark(0xEB / 255.0f, 0xEB / 255.0f, 0xEB / 255.0f, 1.0f);         // gray 12
+const ImVec4 kAccent(0x3B / 255.0f, 0x63 / 255.0f, 0xFB / 255.0f, 1.0f);
+const ImVec4 kAccentHover(0x4B / 255.0f, 0x75 / 255.0f, 0xFF / 255.0f, 1.0f);
+const ImVec4 kAccentDown(0x27 / 255.0f, 0x4D / 255.0f, 0xEA / 255.0f, 1.0f);
+
+// Pushes the fill and mark of a checkbox or radio button in the state it is drawn in; popControlColors after
+void pushControlColors(bool on) {
+    const ImVec4 clear(0.0f, 0.0f, 0.0f, 0.0f);
+    const ImGuiStyle& s = ImGui::GetStyle();
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, on ? kAccent : clear);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, on ? kAccentHover : s.Colors[ImGuiCol_FrameBg]);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, on ? kAccentDown : s.Colors[ImGuiCol_FrameBgHovered]);
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, kControlMark);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, s.FrameRounding * 0.5f); // a 4 px box, not the round 8 px of fields
+}
+
+void popControlColors() {
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(4);
+}
+
+// Every checkbox goes through here, never ImGui::Checkbox (engine docs/TOOL_DESIGN.md 3.2)
+bool checkbox(const char* label, bool* v) {
+    const bool on = *v;
+    pushControlColors(on);
+    const bool changed = ImGui::Checkbox(label, v);
+    const float rounding = ImGui::GetStyle().FrameRounding;
+    popControlColors();
+    if (!on) {
+        // The box is the square at the start of the item (ImGui::Checkbox check_bb)
+        const ImVec2 p = ImGui::GetItemRectMin();
+        const float size = ImGui::GetFrameHeight();
+        const float width = std::max(1.0f, ImGui::GetStyle().FontScaleDpi);
+        const float inset = width * 0.5f;
+        ImGui::GetWindowDrawList()->AddRect({p.x + inset, p.y + inset}, {p.x + size - inset, p.y + size - inset},
+                                            ImGui::GetColorU32(ImGui::IsItemHovered() ? kControlOutlineHover : kControlOutline), rounding, 0, width);
+    }
+    return changed;
+}
+
+bool radioButton(const char* label, bool active) {
+    pushControlColors(active);
+    const bool pressed = ImGui::RadioButton(label, active);
+    popControlColors();
+    if (!active) {
+        // Same circle as ImGui::RadioButton: radius (square - 1) / 2 around the square's center
+        const ImVec2 p = ImGui::GetItemRectMin();
+        const float size = ImGui::GetFrameHeight();
+        const float width = std::max(1.0f, ImGui::GetStyle().FontScaleDpi);
+        const ImVec2 center(std::floor(p.x + size * 0.5f + 0.5f), std::floor(p.y + size * 0.5f + 0.5f));
+        ImGui::GetWindowDrawList()->AddCircle(center, (size - 1.0f) * 0.5f - width * 0.5f,
+                                              ImGui::GetColorU32(ImGui::IsItemHovered() ? kControlOutlineHover : kControlOutline), 0, width);
+    }
+    return pressed;
+}
 
 std::filesystem::path pathOf(const std::string& utf8) { return std::filesystem::path(std::u8string(utf8.begin(), utf8.end())); }
 std::string utf8Of(const std::filesystem::path& p) {
@@ -169,6 +243,8 @@ bool DesignerHost::loadStrings(const std::string& language) {
 // ---------------------------------------------------------------- App
 
 bool App::init(SDL_Renderer* renderer, const std::string& projectDir, const std::string& file, int resolution) {
+    loadLanguage();
+    if (!languageOverride.empty()) setLanguage(languageOverride);
     m_renderer = renderer;
     m_resolution = std::clamp(resolution, 0, static_cast<int>(std::size(kResolutions)) - 1);
     m_glyphTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, kAtlasSize, kAtlasSize);
@@ -229,7 +305,7 @@ bool App::openProject(const std::string& dir) {
     std::error_code ec;
     const std::filesystem::path assets = pathOf(dir) / "assets";
     if (!std::filesystem::is_directory(assets / "ui", ec)) {
-        m_status = "No assets/ui folder in " + dir;
+        m_status = trf("No assets/ui folder in %s", dir.c_str());
         m_statusTime = m_time;
         return false;
     }
@@ -317,7 +393,7 @@ void App::scanFiles() {
 bool App::openFile(const std::string& uiPath) {
     std::string text;
     if (!m_host.readFile(uiPath, text)) {
-        m_status = "Cannot read " + uiPath;
+        m_status = trf("Cannot read %s", uiPath.c_str());
         m_statusTime = m_time;
         return false;
     }
@@ -343,7 +419,7 @@ bool App::save() {
         std::ofstream out(m_host.assets / pathOf(m_file), std::ios::binary);
         out << m_text;
         if (!out) {
-            m_status = "Cannot write " + m_file;
+            m_status = trf("Cannot write %s", m_file.c_str());
             m_statusTime = m_time;
             return false;
         }
@@ -353,7 +429,7 @@ bool App::save() {
     m_fileTime = std::filesystem::last_write_time(m_host.assets / pathOf(m_file), ec);
     m_externalChange = false;
     m_ui->setDraft(m_screen, nullptr); // the file is the text again
-    m_status = "Saved " + m_file;
+    m_status = trf("Saved %s", m_file.c_str());
     m_statusTime = m_time;
     return true;
 }
@@ -361,7 +437,7 @@ bool App::save() {
 void App::reloadFromDisk() {
     const std::string file = m_file;
     openFile(file);
-    m_status = "Reloaded " + file + " (changed on disk)";
+    m_status = trf("Reloaded %s (changed on disk)", file.c_str());
     m_statusTime = m_time;
 }
 
@@ -419,7 +495,7 @@ void App::undo(bool redo) {
 bool App::guardUnsaved(int next) {
     if (m_text == m_savedText) return true;
     m_pendingAction = next;
-    ImGui::OpenPopup("Unsaved changes");
+    ImGui::OpenPopup("###unsaved");
     return false;
 }
 
@@ -450,6 +526,7 @@ void App::frame(double dt) {
         if (guardUnsaved(1)) m_quitConfirmed = true;
     }
     checkExternalChange();
+    if (languageOverride.empty()) followLanguage(); // MealKit Manager or another Mk tool changed the suite language
 
     ImGuiIO& io = ImGui::GetIO();
     if (!io.WantTextInput && io.KeyCtrl) {
@@ -478,13 +555,14 @@ void App::frame(double dt) {
     drawUnsavedDialog();
     drawNameDialog();
     if (!m_showWindow.empty()) {
-        ImGui::SetWindowFocus(m_showWindow.c_str());
+        ImGui::SetWindowFocus(("###" + m_showWindow).c_str());
         m_showWindow.clear();
     }
 }
 
 void App::layoutDocks(unsigned dockspace) {
-    if (ImGui::DockBuilderGetNode(dockspace) && ImGui::DockBuilderGetNode(dockspace)->IsSplitNode()) return; // saved layout
+    if (ImGui::DockBuilderGetNode(dockspace) && ImGui::DockBuilderGetNode(dockspace)->IsSplitNode() && ImGui::FindWindowSettingsByID(ImHashStr("###Files")))
+        return; // saved layout (one saved before the ### panel ids is laid out again)
     ImGui::DockBuilderRemoveNode(dockspace);
     ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace, ImGui::GetMainViewport()->Size);
@@ -494,31 +572,31 @@ void App::layoutDocks(unsigned dockspace) {
     ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.2f, nullptr, &center);
     ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.6f, nullptr, &left);
     ImGuiID rightBottom = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.55f, nullptr, &right);
-    ImGui::DockBuilderDockWindow("Files", left);
-    ImGui::DockBuilderDockWindow("Library", left);
-    ImGui::DockBuilderDockWindow("Tree", leftBottom);
-    ImGui::DockBuilderDockWindow("Properties", right);
-    ImGui::DockBuilderDockWindow("Values", right);
-    ImGui::DockBuilderDockWindow("Source", rightBottom);
-    ImGui::DockBuilderDockWindow("Problems", bottom);
-    ImGui::DockBuilderDockWindow("Preview", center);
+    ImGui::DockBuilderDockWindow("###Files", left);
+    ImGui::DockBuilderDockWindow("###Library", left);
+    ImGui::DockBuilderDockWindow("###Tree", leftBottom);
+    ImGui::DockBuilderDockWindow("###Properties", right);
+    ImGui::DockBuilderDockWindow("###Values", right);
+    ImGui::DockBuilderDockWindow("###Source", rightBottom);
+    ImGui::DockBuilderDockWindow("###Problems", bottom);
+    ImGui::DockBuilderDockWindow("###Preview", center);
     ImGui::DockBuilderFinish(dockspace);
 }
 
 void App::drawMenu() {
     if (!ImGui::BeginMainMenuBar()) return;
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Open project folder...")) SDL_ShowOpenFolderDialog(folderPicked, this, static_cast<SDL_Window*>(window), nullptr, false);
-        if (ImGui::MenuItem("New screen...", nullptr, false, !m_project.empty())) m_nameDialog = 1;
-        if (ImGui::MenuItem("Save", "Ctrl+S", false, !m_file.empty())) save();
-        if (ImGui::MenuItem("Reload from disk", nullptr, false, !m_file.empty())) reloadFromDisk();
+    if (ImGui::BeginMenu(tr("File"))) {
+        if (ImGui::MenuItem(tr("Open project folder..."))) SDL_ShowOpenFolderDialog(folderPicked, this, static_cast<SDL_Window*>(window), nullptr, false);
+        if (ImGui::MenuItem(tr("New screen..."), nullptr, false, !m_project.empty())) m_nameDialog = 1;
+        if (ImGui::MenuItem(tr("Save"), "Ctrl+S", false, !m_file.empty())) save();
+        if (ImGui::MenuItem(tr("Reload from disk"), nullptr, false, !m_file.empty())) reloadFromDisk();
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit")) requestQuit();
+        if (ImGui::MenuItem(tr("Quit"))) requestQuit();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !m_undo.empty())) undo(false);
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !m_redo.empty())) undo(true);
+    if (ImGui::BeginMenu(tr("Edit"))) {
+        if (ImGui::MenuItem(tr("Undo"), "Ctrl+Z", false, !m_undo.empty())) undo(false);
+        if (ImGui::MenuItem(tr("Redo"), "Ctrl+Y", false, !m_redo.empty())) undo(true);
         ImGui::EndMenu();
     }
     if (!m_project.empty()) {
@@ -538,21 +616,47 @@ void App::drawMenu() {
                 ImGui::EndCombo();
             }
         }
-        ImGui::Checkbox("Interact", &m_interact);
-        ImGui::SetItemTooltip("On: the preview gets the mouse (buttons, sliders, inputs). Off: clicks select nodes");
+        checkbox(tr("Interact"), &m_interact);
+        ImGui::SetItemTooltip(tr("On: the preview gets the mouse (buttons, sliders, inputs). Off: clicks select nodes"));
     }
     if (!m_status.empty() && m_time - m_statusTime < 6.0) ImGui::TextDisabled("  %s", m_status.c_str());
+    drawLanguageButton();
     ImGui::EndMainMenuBar();
+}
+
+void App::drawLanguageButton() {
+    // The name in English too while another language is on, so someone who can't read it still knows the button
+    const std::string name = std::strcmp(language(), "en") == 0 ? std::string("Language") : std::string(tr("Language")) + " (Language)";
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - ImGui::GetFrameHeight()); // the right end, inside the padding
+    if (iconButton(kIconLanguage, name.c_str())) ImGui::OpenPopup("##language");
+    if (ImGui::BeginPopup("##language")) {
+        for (const Language& l : kLanguages) {
+            if (ImGui::MenuItem(l.name, nullptr, std::strcmp(language(), l.code) == 0)) {
+                languageOverride.clear();
+                if (!saveLanguage(l.code)) {
+                    setLanguage(l.code);
+                    m_status = trf("Cannot save the language to %s", mkcontract::userPath(mkcontract::kEditorSettings).c_str());
+                    m_statusTime = m_time;
+                }
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+std::string App::panelTitle(const char* glyph, const char* name) const {
+    return (iconFont ? std::string(glyph) + "  " : std::string()) + tr(name) + "###" + name;
 }
 
 void App::drawStart() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.4f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::Begin("Start", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
-    ImGui::TextUnformatted("MkUI Designer " MKUI_VERSION);
-    ImGui::TextDisabled("Edits a project's assets/ui/*.ui. The game reads the same files.");
+    ImGui::Begin((std::string(tr("Start")) + "###Start").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+    ImGui::TextUnformatted((std::string(tr("MkUI Designer")) + " " MKUI_VERSION).c_str());
+    ImGui::TextDisabled(tr("Edits a project's assets/ui/*.ui. The game reads the same files."));
     ImGui::Spacing();
-    if (ImGui::Button("Open project folder...")) SDL_ShowOpenFolderDialog(folderPicked, this, static_cast<SDL_Window*>(window), nullptr, false);
+    if (ImGui::Button(tr("Open project folder..."))) SDL_ShowOpenFolderDialog(folderPicked, this, static_cast<SDL_Window*>(window), nullptr, false);
     if (!m_status.empty()) ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "%s", m_status.c_str());
     ImGui::End();
 }
@@ -571,18 +675,18 @@ bool App::iconButton(const char* glyph, const char* name, bool small) {
 }
 
 void App::drawFiles() {
-    ImGui::Begin("Files");
-    if (iconButton(kIconAdd, "New screen", true)) m_nameDialog = 1;
+    ImGui::Begin(panelTitle(kIconFolder, "Files").c_str());
+    if (iconButton(kIconAdd, tr("New screen"), true)) m_nameDialog = 1;
     ImGui::SameLine();
-    if (iconButton(kIconRefresh, "Refresh", true)) scanFiles();
+    if (iconButton(kIconRefresh, tr("Refresh"), true)) scanFiles();
     if (m_penpot.running()) {
         ImGui::SameLine();
-        if (iconButton(kIconCopy, "Copy the Penpot plugin address", true)) {
+        if (iconButton(kIconCopy, tr("Copy the Penpot plugin address"), true)) {
             ImGui::SetClipboardText(m_penpot.pluginUrl().c_str());
-            m_status = "Copied the Penpot plugin address: in Penpot, Plugins > Install, paste it";
+            m_status = tr("Copied the Penpot plugin address: in Penpot, Plugins > Install, paste it");
             m_statusTime = m_time;
         }
-        ImGui::SetItemTooltip("Copies %s\nIn Penpot: Plugins > Install. Exports from the MealKit plugin are written into this project", m_penpot.pluginUrl().c_str());
+        ImGui::SetItemTooltip(tr("Copies %s\nIn Penpot: Plugins > Install. Exports from the MealKit plugin are written into this project"), m_penpot.pluginUrl().c_str());
     }
     for (const std::string& f : m_files) {
         const std::string label = f.substr(3); // without "ui/"
@@ -614,15 +718,15 @@ void App::drawTreeNode(const SourceNode& node, Path& path) {
 }
 
 void App::drawTree() {
-    ImGui::Begin("Tree");
-    if (m_file.empty()) ImGui::TextDisabled("Open a file");
-    else if (m_source.root.children.empty()) ImGui::TextDisabled("No board");
+    ImGui::Begin(panelTitle(kIconTree, "Tree").c_str());
+    if (m_file.empty()) ImGui::TextDisabled(tr("Open a file"));
+    else if (m_source.root.children.empty()) ImGui::TextDisabled(tr("No board"));
     else {
         const bool editable = m_sourceError.empty() && !m_source.exported;
         ImGui::BeginDisabled(!editable);
         const SourceNode* sel = m_hasSelection ? findNode(m_source, m_selected) : nullptr;
         ImGui::BeginDisabled(!sel || m_selected.empty());
-        if (iconButton(kIconRemove, "Delete node", true)) {
+        if (iconButton(kIconRemove, tr("Delete node"), true)) {
             snapshot();
             removeNode(m_source, m_selected);
             m_hasSelection = false;
@@ -631,18 +735,18 @@ void App::drawTree() {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!sel || sel->kind != "frame" || m_selected.empty());
-        if (ImGui::SmallButton("Make component")) m_nameDialog = 2;
-        ImGui::SetItemTooltip("Moves this frame into ui/components/<name>.ui and leaves a \"use\" here");
+        if (ImGui::SmallButton(tr("Make component"))) m_nameDialog = 2;
+        ImGui::SetItemTooltip(tr("Moves this frame into ui/components/<name>.ui and leaves a \"use\" here"));
         ImGui::EndDisabled();
         ImGui::EndDisabled();
         if (sel && sel->kind == "use" && sel->args.rfind("ui/", 0) == 0) {
             ImGui::SameLine();
-            if (iconButton(kIconEdit, "Edit component", true)) {
+            if (iconButton(kIconEdit, tr("Edit component"), true)) {
                 m_pendingFile = sel->args;
                 if (guardUnsaved(2)) openFile(m_pendingFile);
             }
         }
-        if (m_source.exported) ImGui::TextDisabled("Penpot export: read-only");
+        if (m_source.exported) ImGui::TextDisabled(tr("Penpot export: read-only"));
         ImGui::Separator();
         ImGui::BeginChild("tree");
         Path path;
@@ -740,8 +844,8 @@ bool App::drawInspector(SourceNode& node) {
     auto combo = [&](const char* label, const char* key, const char* const* options, size_t count) {
         std::string v;
         const bool has = getProperty(node, key, v);
-        if (ImGui::BeginCombo(label, has ? v.c_str() : "(default)")) {
-            if (ImGui::Selectable("(default)", !has) && has) unset(key);
+        if (ImGui::BeginCombo(label, has ? v.c_str() : tr("(default)"))) {
+            if (ImGui::Selectable(tr("(default)"), !has) && has) unset(key);
             for (size_t i = 0; i < count; ++i)
                 if (ImGui::Selectable(options[i], has && v == options[i])) set(key, options[i]);
             ImGui::EndCombo();
@@ -767,19 +871,19 @@ bool App::drawInspector(SourceNode& node) {
     }
 
     // ---- Layout: position, size modes, anchors
-    ImGui::SeparatorText("Layout");
-    if (placedByLayout) ImGui::TextDisabled("Placed by the parent's layout (%s)", words(parentLayout).empty() ? "" : words(parentLayout)[0].c_str());
+    ImGui::SeparatorText(tr("Layout"));
+    if (placedByLayout) ImGui::TextDisabled(tr("Placed by the parent's layout (%s)"), words(parentLayout).empty() ? "" : words(parentLayout)[0].c_str());
     else if (node.kind != "board") {
         std::vector<float> pos = getProperty(node, "pos", value) ? numbers(value) : std::vector<float>{0.0f, 0.0f};
-        if (pos.size() == 2 && ImGui::DragFloat2("Position", pos.data(), 1.0f, 0.0f, 0.0f, "%.0f")) set("pos", num(std::round(pos[0])) + " " + num(std::round(pos[1])));
+        if (pos.size() == 2 && ImGui::DragFloat2(tr("Position"), pos.data(), 1.0f, 0.0f, 0.0f, "%.0f")) set("pos", num(std::round(pos[0])) + " " + num(std::round(pos[1])));
     }
     if (node.kind != "board" && (node.kind != "use" || getProperty(node, "size", value))) {
         std::vector<std::string> parts = getProperty(node, "size", value) ? words(value) : std::vector<std::string>{};
         const bool text = node.kind == "text";
         if (parts.size() != 2)
             parts = {text ? "hug" : num(hasBox ? std::round(drawn.w) : 100.0f), text ? "hug" : num(hasBox ? std::round(drawn.h) : 100.0f)};
-        const char* modes[] = {"Fixed", "Fit content", "Fill"};
-        const char* tips[] = {"A set number of units", "As large as its children or text (hug)", "Takes the room left in the parent's layout (fill)"};
+        const char* modes[] = {tr("Fixed"), tr("Fit content"), tr("Fill")};
+        const char* tips[] = {tr("A set number of units"), tr("As large as its children or text (hug)"), tr("Takes the room left in the parent's layout (fill)")};
         bool sizeChanged = false;
         for (int axis = 0; axis < 2; ++axis) {
             ImGui::PushID(axis);
@@ -787,7 +891,7 @@ bool App::drawInspector(SourceNode& node) {
             const int mode = p == "hug" ? 1 : p == "fill" ? 2 : 0;
             const float full = ImGui::CalcItemWidth();
             ImGui::SetNextItemWidth(mode == 0 ? full * 0.5f : full);
-            if (ImGui::BeginCombo(mode == 0 ? "##mode" : axis == 0 ? "Width" : "Height", modes[mode])) {
+            if (ImGui::BeginCombo(mode == 0 ? "##mode" : axis == 0 ? tr("Width") : tr("Height"), modes[mode])) {
                 for (int m = 0; m < 3; ++m) {
                     if (ImGui::Selectable(modes[m], m == mode) && m != mode) {
                         p = m == 1 ? "hug" : m == 2 ? "fill" : num(std::round(hasBox ? (axis == 0 ? drawn.w : drawn.h) : 100.0f));
@@ -803,7 +907,7 @@ bool App::drawInspector(SourceNode& node) {
                 float v = 0;
                 if (!isNumber(p, v)) {
                     ImGui::TextDisabled("%s", p.c_str());
-                } else if (ImGui::DragFloat(axis == 0 ? "Width" : "Height", &v, 1.0f, 0.0f, 100000.0f, "%.0f")) {
+                } else if (ImGui::DragFloat(axis == 0 ? tr("Width") : tr("Height"), &v, 1.0f, 0.0f, 100000.0f, "%.0f")) {
                     p = num(std::round(v));
                     sizeChanged = true;
                 }
@@ -842,19 +946,19 @@ bool App::drawInspector(SourceNode& node) {
             ImGui::SetCursorScreenPos(ImVec2(x, start.y + axis * (ImGui::GetFrameHeight() + 4.0f)));
             ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetFontSize() * 7.0f));
             ImGui::PushID(10 + axis);
-            if (ImGui::BeginCombo(axis == 0 ? "Anchor" : "##v", c[static_cast<size_t>(axis)].c_str())) {
+            if (ImGui::BeginCombo(axis == 0 ? tr("Anchor") : "##v", c[static_cast<size_t>(axis)].c_str())) {
                 for (const char* o : axis == 0 ? hAll : vAll)
                     if (ImGui::Selectable(o, c[static_cast<size_t>(axis)] == o)) c[static_cast<size_t>(axis)] = o, write();
                 ImGui::EndCombo();
             }
-            ImGui::SetItemTooltip("%s", axis == 0 ? "Which edge it keeps its distance to when the screen is wider. leftright stretches, scale grows with the screen"
-                                                  : "Which edge it keeps its distance to when the screen is taller. topbottom stretches, scale grows with the screen");
+            ImGui::SetItemTooltip("%s", axis == 0 ? tr("Which edge it keeps its distance to when the screen is wider. leftright stretches, scale grows with the screen")
+                                                  : tr("Which edge it keeps its distance to when the screen is taller. topbottom stretches, scale grows with the screen"));
             ImGui::PopID();
         }
         ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + std::max(3.0f * (s + 2.0f), 2.0f * (ImGui::GetFrameHeight() + 4.0f)) + 2.0f));
         ImGui::Dummy(ImVec2(1, 1));
     }
-    if (hasBox) ImGui::TextDisabled("Drawn at %.0f, %.0f  size %.0f x %.0f", drawn.x, drawn.y, drawn.w, drawn.h);
+    if (hasBox) ImGui::TextDisabled(tr("Drawn at %.0f, %.0f  size %.0f x %.0f"), drawn.x, drawn.y, drawn.w, drawn.h);
 
     // ---- Children's layout (frames and the board)
     if (node.kind == "frame" || node.kind == "board") {
@@ -862,8 +966,8 @@ bool App::drawInspector(SourceNode& node) {
         const bool hasLayout = getProperty(node, "layout", layout);
         const std::vector<std::string> parts = words(layout);
         const std::string kind = parts.empty() ? std::string() : parts[0];
-        if (ImGui::BeginCombo("Children", hasLayout ? kind.c_str() : "free (pos)")) {
-            if (ImGui::Selectable("free (pos)", !hasLayout) && hasLayout) unset("layout");
+        if (ImGui::BeginCombo(tr("Children"), hasLayout ? kind.c_str() : tr("free (pos)"))) {
+            if (ImGui::Selectable(tr("free (pos)"), !hasLayout) && hasLayout) unset("layout");
             for (const char* k : {"row", "column", "grid"})
                 if (ImGui::Selectable(k, kind == k) && kind != k) {
                     std::string line = k; // row <-> column keeps reverse/wrap; grid starts plain
@@ -873,10 +977,10 @@ bool App::drawInspector(SourceNode& node) {
                 }
             ImGui::EndCombo();
         }
-        ImGui::SetItemTooltip("How the children are placed. Free: each by its own pos");
+        ImGui::SetItemTooltip(tr("How the children are placed. Free: each by its own pos"));
         if (hasLayout && kind != "grid") {
             bool wrap = std::find(parts.begin(), parts.end(), "wrap") != parts.end();
-            if (ImGui::Checkbox("Wrap", &wrap)) {
+            if (checkbox(tr("Wrap"), &wrap)) {
                 std::string line = kind;
                 for (size_t i = 1; i < parts.size(); ++i)
                     if (parts[i] != "wrap") line += " " + parts[i];
@@ -884,28 +988,28 @@ bool App::drawInspector(SourceNode& node) {
             }
         }
         if (hasLayout) {
-            combo("Justify", "justify", kJustify, std::size(kJustify));
-            combo("Align", "align", kAlign, std::size(kAlign));
-            number("Gap", "gap", 0.0f, 0.5f, 0.0f, 10000.0f, "%.0f");
+            combo(tr("Justify"), "justify", kJustify, std::size(kJustify));
+            combo(tr("Align"), "align", kAlign, std::size(kAlign));
+            number(tr("Gap"), "gap", 0.0f, 0.5f, 0.0f, 10000.0f, "%.0f");
         }
         std::string pad;
         std::vector<float> p = getProperty(node, "padding", pad) ? numbers(pad) : std::vector<float>{0.0f};
         if (p.size() == 2) p = {p[0], p[1], p[0], p[1]};
         if (p.size() == 1) p = {p[0], p[0], p[0], p[0]};
         if (p.size() == 4) {
-            if (ImGui::DragFloat4("Padding", p.data(), 0.5f, 0.0f, 10000.0f, "%.0f")) {
+            if (ImGui::DragFloat4(tr("Padding"), p.data(), 0.5f, 0.0f, 10000.0f, "%.0f")) {
                 const bool same = p[0] == p[1] && p[1] == p[2] && p[2] == p[3];
                 set("padding", same ? num(p[0]) : num(p[0]) + " " + num(p[1]) + " " + num(p[2]) + " " + num(p[3]));
             }
-            ImGui::SetItemTooltip("top, right, bottom, left");
-        } else ImGui::TextDisabled("Padding  %s", pad.c_str());
+            ImGui::SetItemTooltip(tr("top, right, bottom, left"));
+        } else ImGui::TextDisabled(tr("Padding  %s"), pad.c_str());
     }
 
     // ---- Style
-    if (node.kind != "board" || getProperty(node, "fill", value)) ImGui::SeparatorText("Style");
+    if (node.kind != "board" || getProperty(node, "fill", value)) ImGui::SeparatorText(tr("Style"));
     for (const char* key : {"fill", "color"}) {
         if (!getProperty(node, key, value)) continue;
-        const char* label = key == std::string("fill") ? "Fill" : "Text color";
+        const char* label = key == std::string("fill") ? tr("Fill") : tr("Text color");
         float rgba[4];
         if (parseHex(value, rgba)) {
             if (ImGui::ColorEdit4(label, rgba, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf))
@@ -913,9 +1017,9 @@ bool App::drawInspector(SourceNode& node) {
         } else ImGui::TextDisabled("%s  %s", label, value.c_str()); // $token
     }
     if (node.kind != "board" && node.kind != "use") {
-        if (!getProperty(node, "fill", value) && node.kind == "frame" && ImGui::SmallButton("Add fill")) set("fill", "#FFFFFF33");
-        if (node.kind == "frame" || node.kind == "image") number("Corner radius", "radius", 0.0f, 0.5f, 0.0f, 10000.0f, "%.0f");
-        number("Opacity", "opacity", 1.0f, 0.01f, 0.0f, 1.0f, "%.2f");
+        if (!getProperty(node, "fill", value) && node.kind == "frame" && ImGui::SmallButton(tr("Add fill"))) set("fill", "#FFFFFF33");
+        if (node.kind == "frame" || node.kind == "image") number(tr("Corner radius"), "radius", 0.0f, 0.5f, 0.0f, 10000.0f, "%.0f");
+        number(tr("Opacity"), "opacity", 1.0f, 0.01f, 0.0f, 1.0f, "%.2f");
     }
 
     // ---- Pickers: the project's fonts and pictures, read again every few seconds
@@ -927,37 +1031,37 @@ bool App::drawInspector(SourceNode& node) {
         listAssets(m_host.assets / "fonts", "", {".ttf", ".otf"}, false, m_fontFiles);
     }
     if (node.kind == "text") {
-        ImGui::SeparatorText("Text");
+        ImGui::SeparatorText(tr("Text"));
         std::string content;
         if (getProperty(node, "content", content)) {
             ImGui::SetNextItemWidth(-1);
             if (inputLine("##content", content)) set("content", content);
-            ImGui::SetItemTooltip("{field} inserts a view model value");
-        } else if (getProperty(node, "key", content)) ImGui::TextDisabled("Translated text: key %s", content.c_str());
-        number("Font size", "fontSize", 24.0f, 0.25f, 1.0f, 1000.0f, "%.0f");
+            ImGui::SetItemTooltip(tr("{field} inserts a view model value"));
+        } else if (getProperty(node, "key", content)) ImGui::TextDisabled(tr("Translated text: key %s"), content.c_str());
+        number(tr("Font size"), "fontSize", 24.0f, 0.25f, 1.0f, 1000.0f, "%.0f");
         std::string font;
         const bool hasFont = getProperty(node, "font", font);
-        if (ImGui::BeginCombo("Font", hasFont ? font.c_str() : "(default)")) {
-            if (ImGui::Selectable("(default)", !hasFont) && hasFont) unset("font");
-            if (m_fontFiles.empty()) ImGui::TextDisabled("No .ttf or .otf in assets/fonts");
+        if (ImGui::BeginCombo(tr("Font"), hasFont ? font.c_str() : tr("(default)"))) {
+            if (ImGui::Selectable(tr("(default)"), !hasFont) && hasFont) unset("font");
+            if (m_fontFiles.empty()) ImGui::TextDisabled(tr("No .ttf or .otf in assets/fonts"));
             for (const std::string& f : m_fontFiles)
                 if (ImGui::Selectable(f.c_str(), hasFont && f == font)) set("font", f);
             ImGui::EndCombo();
         }
-        combo("Text align", "textAlign", kTextAlign, std::size(kTextAlign));
-        if (!getProperty(node, "color", value) && ImGui::SmallButton("Set text color")) set("color", "#FFFFFF");
+        combo(tr("Text align"), "textAlign", kTextAlign, std::size(kTextAlign));
+        if (!getProperty(node, "color", value) && ImGui::SmallButton(tr("Set text color"))) set("color", "#FFFFFF");
     }
     if (node.kind == "image") {
-        ImGui::SeparatorText("Image");
+        ImGui::SeparatorText(tr("Image"));
         std::string src;
         const bool has = getProperty(node, "src", src);
-        if (ImGui::BeginCombo("Image file", has ? src.c_str() : "(none)", ImGuiComboFlags_HeightLarge)) {
-            if (m_imageFiles.empty()) ImGui::TextDisabled("No pictures in assets/ui or assets/textures yet");
+        if (ImGui::BeginCombo(tr("Image file"), has ? src.c_str() : tr("(none)"), ImGuiComboFlags_HeightLarge)) {
+            if (m_imageFiles.empty()) ImGui::TextDisabled(tr("No pictures in assets/ui or assets/textures yet"));
             for (const std::string& f : m_imageFiles)
                 if (ImGui::Selectable(f.c_str(), has && f == src)) set("src", f);
             ImGui::EndCombo();
         }
-        if (!has) ImGui::TextDisabled("Copy a PNG into assets/ui and pick it here");
+        if (!has) ImGui::TextDisabled(tr("Copy a PNG into assets/ui and pick it here"));
     }
 
     // ---- Behaviour: what the node does when the player uses it
@@ -968,12 +1072,12 @@ bool App::drawInspector(SourceNode& node) {
             const char* fresh; // the words a new choice writes
             bool text;         // text nodes only
         };
-        const Kind kinds[] = {{"button", "Button (sends an action)", "confirm", false},
-                              {"toggle", "Toggle (bool field)", "enabled", false},
-                              {"slider", "Slider (float field)", "value01 0 1 0.01", false},
-                              {"list", "List (repeats the first child)", "items", false},
-                              {"scroll", "Scroll area", "", false},
-                              {"textInput", "Text input (string field)", "text", true}};
+        const Kind kinds[] = {{"button", tr("Button (sends an action)"), "confirm", false},
+                              {"toggle", tr("Toggle (bool field)"), "enabled", false},
+                              {"slider", tr("Slider (float field)"), "value01 0 1 0.01", false},
+                              {"list", tr("List (repeats the first child)"), "items", false},
+                              {"scroll", tr("Scroll area"), "", false},
+                              {"textInput", tr("Text input (string field)"), "text", true}};
         int current = -1;
         std::string line;
         for (int i = 0; i < static_cast<int>(std::size(kinds)); ++i)
@@ -981,9 +1085,9 @@ bool App::drawInspector(SourceNode& node) {
                 current = i;
                 break;
             }
-        ImGui::SeparatorText("Behaviour");
-        if (ImGui::BeginCombo("Kind", current < 0 ? "None (just drawn)" : kinds[current].label)) {
-            if (ImGui::Selectable("None (just drawn)", current < 0) && current >= 0) unset(kinds[current].key);
+        ImGui::SeparatorText(tr("Behaviour"));
+        if (ImGui::BeginCombo(tr("Kind"), current < 0 ? tr("None (just drawn)") : kinds[current].label)) {
+            if (ImGui::Selectable(tr("None (just drawn)"), current < 0) && current >= 0) unset(kinds[current].key);
             for (int i = 0; i < static_cast<int>(std::size(kinds)); ++i) {
                 if (kinds[i].text != (node.kind == "text")) continue;
                 if (ImGui::Selectable(kinds[i].label, i == current) && i != current) {
@@ -1009,8 +1113,8 @@ bool App::drawInspector(SourceNode& node) {
                 if (inputLine(names[i], w[i])) edited = true;
                 ImGui::PopID();
             }
-            if (key == "button") ImGui::TextDisabled("Game code reads the action from ctx.ui.actions()");
-            else if (key != "scroll") ImGui::TextDisabled("The field is a member of the screen's view model");
+            if (key == "button") ImGui::TextDisabled(tr("Game code reads the action from ctx.ui.actions()"));
+            else if (key != "scroll") ImGui::TextDisabled(tr("The field is a member of the screen's view model"));
             if (edited) {
                 while (!w.empty() && w.back().empty()) w.pop_back();
                 std::string out;
@@ -1023,10 +1127,10 @@ bool App::drawInspector(SourceNode& node) {
 }
 
 void App::drawProperties() {
-    ImGui::Begin("Properties");
+    ImGui::Begin(panelTitle(kIconInspector, "Properties").c_str());
     SourceNode* n = m_hasSelection && m_sourceError.empty() ? findNode(m_source, m_selected) : nullptr;
     if (!n) {
-        ImGui::TextDisabled(m_sourceError.empty() ? "Select a node in the tree or the preview" : "Fix the source first");
+        ImGui::TextDisabled(m_sourceError.empty() ? tr("Select a node in the tree or the preview") : tr("Fix the source first"));
         ImGui::End();
         return;
     }
@@ -1061,7 +1165,7 @@ void App::drawProperties() {
         }
         if (!ImGui::IsAnyItemActive()) m_inspectorActive = false;
     }
-    ImGui::SeparatorText("All lines");
+    ImGui::SeparatorText(tr("All lines"));
     if (!n) {
         ImGui::EndDisabled();
         ImGui::End();
@@ -1077,7 +1181,7 @@ void App::drawProperties() {
         // n may move when sourceEdited re-reads the text: the next lines use the fresh node
         n = findNode(m_source, m_selected);
         ImGui::SameLine();
-        if (iconButton(kIconRemove, "Remove")) remove = static_cast<int>(i);
+        if (iconButton(kIconRemove, tr("Remove"))) remove = static_cast<int>(i);
         ImGui::PopID();
         if (!n || i >= n->items.size()) break;
     }
@@ -1088,7 +1192,7 @@ void App::drawProperties() {
         n = findNode(m_source, m_selected);
     }
     ImGui::SetNextItemWidth(-1);
-    if (n && ImGui::InputTextWithHint("##add", "add a line: fill #FF8800FF, on hover fill ...", m_newProperty, sizeof m_newProperty,
+    if (n && ImGui::InputTextWithHint("##add", tr("add a line: fill #FF8800FF, on hover fill ..."), m_newProperty, sizeof m_newProperty,
                                       ImGuiInputTextFlags_EnterReturnsTrue)) {
         const std::string line = trim(m_newProperty);
         if (!line.empty()) {
@@ -1108,16 +1212,16 @@ void App::drawProperties() {
 }
 
 void App::drawText() {
-    ImGui::Begin("Source");
+    ImGui::Begin(panelTitle(kIconCode, "Source").c_str());
     if (m_file.empty()) {
-        ImGui::TextDisabled("Open a file");
+        ImGui::TextDisabled(tr("Open a file"));
         ImGui::End();
         return;
     }
     if (m_externalChange) {
-        ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "Changed on disk.");
+        ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), tr("Changed on disk."));
         ImGui::SameLine();
-        if (ImGui::SmallButton("Reload (drop my edits)")) reloadFromDisk();
+        if (ImGui::SmallButton(tr("Reload (drop my edits)"))) reloadFromDisk();
     }
     const std::string before = m_text;
     if (inputMultiline("##text", m_text, ImVec2(-1, -1), ImGuiInputTextFlags_AllowTabInput)) textChanged();
@@ -1130,21 +1234,21 @@ void App::drawText() {
 }
 
 void App::drawProblems() {
-    ImGui::Begin("Problems");
+    ImGui::Begin(panelTitle(kIconWarning, "Problems").c_str());
     if (!m_sourceError.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", m_sourceError.c_str());
     if (m_screen != kNoScreen)
         for (const std::string& e : m_ui->info(m_screen).errors) ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "%s", e.c_str());
     for (const std::string& w : m_host.warnings) ImGui::TextColored(ImVec4(0.949f, 0.580f, 0.137f, 1.0f), "%s", w.c_str());
     if (!m_actions.empty()) {
         ImGui::Separator();
-        for (auto it = m_actions.rbegin(); it != m_actions.rend(); ++it) ImGui::TextDisabled("action %s", it->c_str());
+        for (auto it = m_actions.rbegin(); it != m_actions.rend(); ++it) ImGui::TextDisabled(tr("action %s"), it->c_str());
     }
     ImGui::End();
 }
 
 void App::drawUnsavedDialog() {
-    if (!ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::Text("%s has unsaved changes.", m_file.c_str());
+    if (!ImGui::BeginPopupModal((std::string(tr("Unsaved changes")) + "###unsaved").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text(tr("%s has unsaved changes."), m_file.c_str());
     auto proceed = [&] {
         const int action = m_pendingAction;
         m_pendingAction = 0;
@@ -1153,16 +1257,16 @@ void App::drawUnsavedDialog() {
         else if (action == 2) openFile(m_pendingFile);
         else if (action == 3) openProject(m_pendingProject);
     };
-    if (ImGui::Button("Save")) {
+    if (ImGui::Button(tr("Save"))) {
         if (save()) proceed();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Don't save")) {
+    if (ImGui::Button(tr("Don't save"))) {
         m_savedText = m_text; // drop the edits
         proceed();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
+    if (ImGui::Button(tr("Cancel"))) {
         m_pendingAction = 0;
         ImGui::CloseCurrentPopup();
     }
@@ -1182,32 +1286,32 @@ struct Widget {
 // Same widgets as the MealKit editor's library. Plain colors (not $tokens) so any theme takes them; field and action names are
 // placeholders (a missing field shows under Problems once a view model is bound)
 const Widget kWidgets[] = {
-    {"Panel", "A box that lines its children up in a column (padding, gap, rounded corners)",
+    {trn("Panel"), trn("A box that lines its children up in a column (padding, gap, rounded corners)"),
      "frame panel\n  size 420 hug\n  layout column\n  gap 12\n  padding 24\n  fill #1B2130E6\n  radius 14\nend\n"},
-    {"Text", "A line of text. {field} in it shows a view model value", "text label\n  content Text\n  fontSize 28\n  color #FFFFFF\nend\n"},
-    {"Image", "A picture from assets (set src to a PNG path)", "image image\n  size 96 96\nend\n"},
-    {"Button", "A button that sends an action when pressed",
+    {trn("Text"), trn("A line of text. {field} in it shows a view model value"), "text label\n  content Text\n  fontSize 28\n  color #FFFFFF\nend\n"},
+    {trn("Image"), trn("A picture from assets (set src to a PNG path)"), "image image\n  size 96 96\nend\n"},
+    {trn("Button"), trn("A button that sends an action when pressed"),
      "frame button\n  size 280 60\n  layout row\n  justify center\n  align center\n  fill #3B6FE0\n  radius 10\n  button confirm\n"
      "  on hover fill #5585F0\n  on pressed fill #2C58B8\n  on focus stroke 3 #FFFFFF\n  text buttonLabel\n    content Button\n    fontSize 26\n"
      "    color #FFFFFF\n  end\nend\n"},
-    {"Toggle", "An on/off switch for a bool field",
+    {trn("Toggle"), trn("An on/off switch for a bool field"),
      "frame toggleRow\n  size hug hug\n  layout row\n  align center\n  gap 14\n  frame toggle\n    size 64 32\n    radius 16\n    fill #FFFFFF26\n"
      "    toggle enabled\n    on checked fill #3B6FE0\n    frame knobOff\n      pos 4 4\n      size 24 24\n      radius 12\n      fill #FFFFFF\n"
      "      visible !enabled\n    end\n    frame knobOn\n      pos 36 4\n      size 24 24\n      radius 12\n      fill #FFFFFF\n      visible enabled\n"
      "    end\n  end\n  text toggleLabel\n    content Option\n    fontSize 24\n    color #FFFFFF\n  end\nend\n"},
-    {"Slider", "Drag to set a float field between a minimum and a maximum",
+    {trn("Slider"), trn("Drag to set a float field between a minimum and a maximum"),
      "frame slider\n  size 320 28\n  radius 14\n  fill #FFFFFF26\n  clip\n  slider value01 0 1 0.01\n  on hover stroke 2 #FFFFFF40\n"
      "  frame sliderFill\n    size fill fill\n    widthRatio value01\n    radius 14\n    fill #3B6FE0\n  end\nend\n"},
-    {"Progress bar", "A bar filled by a float field from 0 to 1 (health, loading)",
+    {trn("Progress bar"), trn("A bar filled by a float field from 0 to 1 (health, loading)"),
      "frame progress\n  size 320 20\n  radius 10\n  fill #FFFFFF1A\n  clip\n  frame progressFill\n    size fill fill\n    widthRatio progress\n"
      "    radius 10\n    fill #4CC38A\n  end\nend\n"},
-    {"Text input", "A box the player types into (a string field)",
+    {trn("Text input"), trn("A box the player types into (a string field)"),
      "frame inputBox\n  size 360 52\n  layout row\n  align center\n  padding 0 16\n  fill #00000055\n  stroke 1 #FFFFFF33\n  radius 10\n"
      "  text input\n    size fill hug\n    textInput text\n    maxLength 32\n    fontSize 24\n    color #FFFFFF\n    maxLines 1\n  end\nend\n"},
-    {"List", "Repeats its first child for every element of a list field",
+    {trn("List"), trn("Repeats its first child for every element of a list field"),
      "frame list\n  size 420 hug\n  layout column\n  gap 6\n  list items\n  frame row\n    size fill 48\n    layout row\n    align center\n"
      "    padding 0 14\n    radius 8\n    fill #FFFFFF0A\n    text rowName\n      content {name}\n      fontSize 22\n      color #FFFFFF\n    end\n  end\nend\n"},
-    {"Scroll area", "Clips its content and scrolls it with the wheel or the gamepad",
+    {trn("Scroll area"), trn("Clips its content and scrolls it with the wheel or the gamepad"),
      "frame scrollArea\n  size 420 300\n  scroll\n  frame content\n    size fill hug\n    layout column\n    gap 8\n  end\nend\n"},
 };
 
@@ -1296,14 +1400,14 @@ bool App::makeComponent(const std::string& name) {
     const std::filesystem::path file = m_host.assets / pathOf(asset);
     std::error_code ec;
     if (std::filesystem::exists(file, ec)) {
-        m_status = asset + " exists already";
+        m_status = trf("%s exists already", asset.c_str());
         m_statusTime = m_time;
         return false;
     }
     const std::string before = m_text;
     Source component;
     if (!extractComponent(m_source, m_selected, name, asset, static_cast<i32>(b.w + 0.5f), static_cast<i32>(b.h + 0.5f), component)) {
-        m_status = "Only a frame can become a component";
+        m_status = tr("Only a frame can become a component");
         m_statusTime = m_time;
         textChanged(); // m_source back from the text
         return false;
@@ -1312,7 +1416,7 @@ bool App::makeComponent(const std::string& name) {
     std::ofstream out(file, std::ios::binary);
     out << writeSource(component);
     if (!out) {
-        m_status = "Cannot write " + asset;
+        m_status = trf("Cannot write %s", asset.c_str());
         m_statusTime = m_time;
         m_text = before;
         textChanged();
@@ -1323,14 +1427,14 @@ bool App::makeComponent(const std::string& name) {
     m_redo.clear();
     sourceEdited();
     scanFiles();
-    m_status = "Component " + asset + " (save the screen to keep the use)";
+    m_status = trf("Component %s (save the screen to keep the use)", asset.c_str());
     m_statusTime = m_time;
     return true;
 }
 
 bool App::newScreen(const std::string& name) {
     if (m_text != m_savedText) {
-        m_status = "Save the open screen first";
+        m_status = tr("Save the open screen first");
         m_statusTime = m_time;
         return false;
     }
@@ -1338,14 +1442,14 @@ bool App::newScreen(const std::string& name) {
     const std::filesystem::path file = m_host.assets / pathOf(asset);
     std::error_code ec;
     if (std::filesystem::exists(file, ec)) {
-        m_status = asset + " exists already";
+        m_status = trf("%s exists already", asset.c_str());
         m_statusTime = m_time;
         return false;
     }
     std::ofstream out(file, std::ios::binary);
     out << "# MkUI screen: " << name << "\n@format ui 1\nboard " << name << " 1920 1080\n";
     if (!out) {
-        m_status = "Cannot write " + asset;
+        m_status = trf("Cannot write %s", asset.c_str());
         m_statusTime = m_time;
         return false;
     }
@@ -1355,29 +1459,29 @@ bool App::newScreen(const std::string& name) {
 }
 
 void App::drawLibrary() {
-    ImGui::Begin("Library");
+    ImGui::Begin(panelTitle(kIconLibrary, "Library").c_str());
     const bool editable = !m_file.empty() && m_sourceError.empty() && !m_source.exported;
     ImGui::BeginDisabled(!editable);
-    ImGui::TextDisabled("Widgets");
+    ImGui::TextDisabled(tr("Widgets"));
     const float width = ImGui::GetContentRegionAvail().x;
     const float button = std::max(90.0f, (width - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
     int column = 0;
     for (const Widget& w : kWidgets) {
         if (column++ % 2 && width >= button * 2) ImGui::SameLine();
-        if (ImGui::Button(w.label, ImVec2(button, 0))) {
+        if (ImGui::Button(tr(w.label), ImVec2(button, 0))) {
             SourceNode n;
             if (parseNodeText(w.text, n)) insertNode(std::move(n));
         }
         if (ImGui::BeginDragDropSource()) { // or drag it onto the preview
             const int index = static_cast<int>(&w - kWidgets);
             ImGui::SetDragDropPayload("MKUI_WIDGET", &index, sizeof index);
-            ImGui::Text("%s", w.label);
+            ImGui::Text("%s", tr(w.label));
             ImGui::EndDragDropSource();
         }
-        ImGui::SetItemTooltip("%s (click: add to the selection, drag: drop on the preview)", w.tooltip);
+        ImGui::SetItemTooltip(tr("%s (click: add to the selection, drag: drop on the preview)"), tr(w.tooltip));
     }
     ImGui::Spacing();
-    ImGui::TextDisabled("Components (ui/components)");
+    ImGui::TextDisabled(tr("Components (ui/components)"));
     bool any = false;
     for (const std::string& f : m_files) {
         if (f.rfind("ui/components/", 0) != 0 || f == m_file) continue;
@@ -1395,36 +1499,36 @@ void App::drawLibrary() {
             ImGui::Text("%s", base.c_str());
             ImGui::EndDragDropSource();
         }
-        ImGui::SetItemTooltip("Adds \"use %s %s\": the component's look, placed here", base.c_str(), f.c_str());
+        ImGui::SetItemTooltip(tr("Adds \"use %s %s\": the component's look, placed here"), base.c_str(), f.c_str());
     }
-    if (!any) ImGui::TextDisabled("  none yet: select a frame, then Make component");
+    if (!any) ImGui::TextDisabled(tr("  none yet: select a frame, then Make component"));
     ImGui::EndDisabled();
     ImGui::End();
 }
 
 void App::drawNameDialog() {
     if (m_nameDialog) {
-        ImGui::OpenPopup("Name");
+        ImGui::OpenPopup("###name");
         if (m_nameDialog == 2 && m_hasSelection)
             if (const SourceNode* n = findNode(m_source, m_selected)) std::snprintf(m_nameInput, sizeof m_nameInput, "%s", n->name.c_str());
         if (m_nameDialog == 1) m_nameInput[0] = 0;
     }
     static int kind = 0;
     if (m_nameDialog) kind = m_nameDialog, m_nameDialog = 0;
-    if (!ImGui::BeginPopupModal("Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::TextUnformatted(kind == 1 ? "New screen in assets/ui/ (letters, digits, _ and -)" : "Component file in assets/ui/components/");
+    if (!ImGui::BeginPopupModal((std::string(tr("Name")) + "###name").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted(kind == 1 ? tr("New screen in assets/ui/ (letters, digits, _ and -)") : tr("Component file in assets/ui/components/"));
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     const bool enter = ImGui::InputText("##name", m_nameInput, sizeof m_nameInput, ImGuiInputTextFlags_EnterReturnsTrue);
     const bool ok = validName(m_nameInput);
     ImGui::BeginDisabled(!ok);
-    if (ImGui::Button("Create") || (enter && ok)) {
+    if (ImGui::Button(tr("Create")) || (enter && ok)) {
         if (kind == 1) newScreen(m_nameInput);
         else makeComponent(m_nameInput);
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    if (ImGui::Button(tr("Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
@@ -1599,16 +1703,16 @@ void App::saveValues() {
 }
 
 void App::drawValues() {
-    ImGui::Begin("Values");
+    ImGui::Begin(panelTitle(kIconData, "Values").c_str());
     if (m_file.empty()) {
-        ImGui::TextDisabled("Open a file");
+        ImGui::TextDisabled(tr("Open a file"));
         ImGui::End();
         return;
     }
-    if (ImGui::Checkbox("Use these values", &m_valuesOn)) buildModel();
-    ImGui::SetItemTooltip("Off: the screen as the game shows it with no view model bound");
-    if (m_fields.empty()) ImGui::TextDisabled("This screen binds no fields");
-    ImGui::TextDisabled("Saved in art/ui/samples/ (not shipped)");
+    if (checkbox(tr("Use these values"), &m_valuesOn)) buildModel();
+    ImGui::SetItemTooltip(tr("Off: the screen as the game shows it with no view model bound"));
+    if (m_fields.empty()) ImGui::TextDisabled(tr("This screen binds no fields"));
+    ImGui::TextDisabled(tr("Saved in art/ui/samples/ (not shipped)"));
     ImGui::Separator();
     bool changed = false, commit = false;
     auto edit = [&](const FakeField& f, const std::string& key, const char* label) {
@@ -1619,7 +1723,7 @@ void App::drawValues() {
         switch (f.kind) {
         case ValueKind::Bool: {
             bool b = v == "true";
-            if (ImGui::Checkbox(label, &b)) v = b ? "true" : "false", changed = commit = true;
+            if (checkbox(label, &b)) v = b ? "true" : "false", changed = commit = true;
             break;
         }
         case ValueKind::Float: {
@@ -1635,7 +1739,7 @@ void App::drawValues() {
         case ValueKind::Int:
         case ValueKind::Array: {
             int x = std::atoi(v.c_str());
-            if (f.kind == ValueKind::Array ? ImGui::SliderInt(label, &x, 0, 20, "%d rows") : ImGui::InputInt(label, &x)) v = std::to_string(x), changed = true;
+            if (f.kind == ValueKind::Array ? ImGui::SliderInt(label, &x, 0, 20, tr("%d rows")) : ImGui::InputInt(label, &x)) v = std::to_string(x), changed = true;
             commit |= ImGui::IsItemDeactivatedAfterEdit();
             break;
         }
@@ -1689,7 +1793,7 @@ bool App::takeLiveValues(const mkcontract::live::Instance& from, bool quiet) {
     if (r.status != 200 || !mkcontract::Json::parse(r.body, json) || !json["ok"].flag()) {
         if (!quiet) {
             mkcontract::Json err;
-            m_liveStatus = r.status == 0 ? "No answer" : mkcontract::Json::parse(r.body, err) ? err["error"].str("error") : "Bad answer";
+            m_liveStatus = r.status == 0 ? std::string(tr("No answer")) : mkcontract::Json::parse(r.body, err) ? err["error"].str("error") : std::string(tr("Bad answer"));
         }
         return false;
     }
@@ -1712,7 +1816,7 @@ bool App::takeLiveValues(const mkcontract::live::Instance& from, bool quiet) {
     buildModel();
     if (!quiet) {
         saveValues();
-        m_liveStatus = "Took " + std::to_string(got.size()) + " values of " + json["model"].str("?");
+        m_liveStatus = trf("Took %d values of %s", static_cast<int>(got.size()), json["model"].str("?").c_str());
     }
     return true;
 }
@@ -1743,17 +1847,17 @@ void App::drawLive() {
     if (m_followFirst && !m_live.empty() && !m_file.empty()) {
         m_followFirst = false;
         m_follow = 0;
-        m_liveStatus = "Following (values update twice a second)";
+        m_liveStatus = tr("Following (values update twice a second)");
     }
     if (m_follow >= 0 && m_follow < static_cast<int>(m_live.size()) && m_time - m_followTime > 0.5) {
         m_followTime = m_time;
-        if (!takeLiveValues(m_live[m_follow], true)) m_follow = -1, m_liveStatus = "Follow stopped: the screen isn't open there";
+        if (!takeLiveValues(m_live[m_follow], true)) m_follow = -1, m_liveStatus = tr("Follow stopped: the screen isn't open there");
     }
 
-    ImGui::SeparatorText("From a running game");
+    ImGui::SeparatorText(tr("From a running game"));
     if (m_live.empty()) {
-        ImGui::TextDisabled("None running for this project. Start the game or press Play in the editor;");
-        ImGui::TextDisabled("saved .ui files reload there by themselves.");
+        ImGui::TextDisabled(tr("None running for this project. Start the game or press Play in the editor;"));
+        ImGui::TextDisabled(tr("saved .ui files reload there by themselves."));
         return;
     }
     for (size_t i = 0; i < m_live.size(); ++i) {
@@ -1761,15 +1865,15 @@ void App::drawLive() {
         ImGui::PushID(static_cast<int>(i));
         ImGui::Text("%s %u", in.kind.c_str(), in.pid);
         ImGui::SameLine();
-        if (ImGui::SmallButton("Take values")) takeLiveValues(in, false);
-        ImGui::SetItemTooltip("Copies the view model this game has bound to %s into these values", m_file.c_str());
+        if (ImGui::SmallButton(tr("Take values"))) takeLiveValues(in, false);
+        ImGui::SetItemTooltip(tr("Copies the view model this game has bound to %s into these values"), m_file.c_str());
         ImGui::SameLine();
         bool follow = m_follow == static_cast<int>(i);
-        if (ImGui::Checkbox("Follow", &follow)) {
+        if (checkbox(tr("Follow"), &follow)) {
             m_follow = follow ? static_cast<int>(i) : -1;
-            m_liveStatus = follow ? "Following (values update twice a second)" : "";
+            m_liveStatus = follow ? tr("Following (values update twice a second)") : "";
         }
-        ImGui::TextDisabled("  open: %s", m_liveScreens[i].empty() ? "no screens" : m_liveScreens[i].c_str());
+        ImGui::TextDisabled(tr("  open: %s"), m_liveScreens[i].empty() ? tr("no screens") : m_liveScreens[i].c_str());
         ImGui::PopID();
     }
     if (!m_liveStatus.empty()) ImGui::TextWrapped("%s", m_liveStatus.c_str());
@@ -1939,10 +2043,10 @@ void App::applyDrag(float dx, float dy, bool snap) {
 
 void App::drawPreview(double dt) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::Begin("Preview");
+    ImGui::Begin(panelTitle(kIconPreview, "Preview").c_str());
     ImGui::PopStyleVar();
     if (m_screen == kNoScreen) {
-        ImGui::TextDisabled("  Pick a .ui file on the left");
+        ImGui::TextDisabled(tr("  Pick a .ui file on the left"));
         ImGui::End();
         return;
     }
@@ -2084,9 +2188,8 @@ void App::drawPreview(double dt) {
                               : hoverHandle == 4 || hoverHandle == 8 ? ImGuiMouseCursor_ResizeNS
                               : hoverHandle == (1 | 4) || hoverHandle == (2 | 8) ? ImGuiMouseCursor_ResizeNWSE
                                                                                  : ImGuiMouseCursor_ResizeNESW);
-    char zoom[80];
-    std::snprintf(zoom, sizeof zoom, "%d%%   wheel zoom, middle drag pan, F fit, Shift snaps to 10", static_cast<int>(std::lround(fit * 100.0f)));
-    draw->AddText(ImVec2(cursor.x + 8, cursor.y + avail.y - ImGui::GetTextLineHeight() - 6), IM_COL32(200, 200, 200, 150), zoom);
+    const std::string zoom = trf("%d%%   wheel zoom, middle drag pan, F fit, Shift snaps to 10", static_cast<int>(std::lround(fit * 100.0f)));
+    draw->AddText(ImVec2(cursor.x + 8, cursor.y + avail.y - ImGui::GetTextLineHeight() - 6), IM_COL32(200, 200, 200, 150), zoom.c_str());
     ImGui::End();
 }
 

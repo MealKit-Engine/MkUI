@@ -18,7 +18,7 @@ add_library(mkui_imgui STATIC
 target_include_directories(mkui_imgui PUBLIC ${imgui_dir} ${imgui_dir}/backends)
 target_link_libraries(mkui_imgui PUBLIC SDL3::SDL3-static)
 
-add_executable(MkUI WIN32 main.cpp App.h App.cpp PenpotServer.h PenpotServer.cpp)
+add_executable(MkUI WIN32 main.cpp App.h App.cpp PenpotServer.h PenpotServer.cpp Strings.h Strings.cpp)
 target_link_libraries(MkUI PRIVATE mkui mkui_imgui mkcontract_client SDL3::SDL3-static) # mkcontract_client: live connection to running games
 if(WIN32)
     target_link_libraries(MkUI PRIVATE ws2_32) # Penpot plugin server sockets
@@ -37,6 +37,17 @@ foreach(config Debug Release RelWithDebInfo MinSizeRel)
     string(TOUPPER ${config} upper)
     set_target_properties(MkUI PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${upper} ${CMAKE_BINARY_DIR}/bin)
 endforeach()
+if(MKUI_BUILD_TESTS)
+    # Every tr() text of the app has its Korean line (engine docs/TOOL_DESIGN.md section 4)
+    add_executable(mkui_strings_test ../tests/StringsTest.cpp Strings.cpp)
+    target_include_directories(mkui_strings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(mkui_strings_test PRIVATE mkcontract)
+    target_compile_definitions(mkui_strings_test PRIVATE TOOL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC)
+        target_compile_options(mkui_strings_test PRIVATE /W4 /permissive- /utf-8)
+    endif()
+    add_test(NAME mkui_strings_test COMMAND mkui_strings_test)
+endif()
 
 # Manifest (version from project(mkui VERSION ...)). exe is written without an extension, .exe is appended on Windows
 set(MKUI_VERSION ${PROJECT_VERSION})
