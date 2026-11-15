@@ -24,6 +24,7 @@
 //         fontSize 36
 //         color #FFFFFF
 //         span 1 color $accent   ← style of numbered tag <1>…</1>
+//                                  <img:ui/icons/burn.png> in the text: that picture inline, one em tall (width by its aspect), wrapping like a syllable
 //       end
 //     end
 //   end

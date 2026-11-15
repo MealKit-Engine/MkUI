@@ -1173,6 +1173,32 @@ struct System::Impl {
                 u32 color = v.textColor;
                 if (run.span >= 0) color = theme.color(d.spans[static_cast<size_t>(run.span)].color, color);
                 color = withAlpha(color, opacity);
+                if (g.image >= 0) { // inline picture: one em tall, centred on the em box around the baseline, untinted
+                    const std::string& path = sh.images[static_cast<size_t>(g.image)];
+                    const ImageInfo img = atlas.image(path);
+                    if (!img.valid) bindingError(s, "image assets/" + path + " not found (inline <img:>)");
+                    else if (g.advance > 0.0f) {
+                        const FontMetrics& fm = atlas.metrics(g.font);
+                        const f32 h = run.size, w = g.advance - run.letterSpacing;
+                        const f32 top = baseline + (fm.descent - fm.ascent) * run.size * 0.5f - h * 0.5f;
+                        Quad q;
+                        q.rect[0] = s.originX + x * k;
+                        q.rect[1] = s.originY + top * k;
+                        q.rect[2] = w * k;
+                        q.rect[3] = h * k;
+                        std::memcpy(q.clip, clip, sizeof(q.clip));
+                        q.uv[0] = img.u0;
+                        q.uv[1] = img.v0;
+                        q.uv[2] = img.u1;
+                        q.uv[3] = img.v1;
+                        q.color0 = withAlpha(0xFFFFFFFFu, opacity);
+                        q.color1 = 0;
+                        q.flags = kQuadImage;
+                        quads.push_back(q);
+                    }
+                    x += g.advance;
+                    continue;
+                }
                 if (g.glyph.u1 > g.glyph.u0) {
                     Quad q;
                     q.rect[0] = s.originX + (x + g.glyph.x0 * run.size) * k;

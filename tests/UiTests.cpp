@@ -331,6 +331,29 @@ void testPenpotExpected() {
           "expected pause.ui parses as an exported screen");
 }
 
+// <img:path> inside text: one picture quad per tag, one em tall and as wide as its aspect ratio, wrapping with the words
+void testInlineImage() {
+    ImageHost host;
+    host.files["ui/burn.png"] = "60 30"; // 2:1
+    host.files["ui/inline.ui"] = "@format ui 1\nboard inline 1920 1080\n  text line\n    pos 0 0\n    size 1000 100\n"
+                                 "    fontSize 20\n    content a<img:ui/burn.png>b <img:ui/burn.png>\n  end\n"
+                                 "  text missing\n    pos 0 200\n    size 1000 100\n    content <img:ui/none.png>\n  end\nend\n";
+    NoBinder binder;
+    mkui::System ui(host, binder);
+    mkui::ScreenId screen = ui.open("ui/inline.ui");
+    mkui::Viewport viewport{0, 0, 1920, 1080};
+    mkui::FrameInput input;
+    ui.update(input, viewport, 1.0 / 60.0);
+    const std::vector<mkui::Quad> quads = imageQuads(ui.render());
+    check(quads.size() == 2, "two inline pictures drawn (the missing one draws nothing)");
+    check(quads.size() == 2 && near(quads[0].rect[3], 20.0f) && near(quads[0].rect[2], 40.0f), "inline picture is one em tall, 2:1 wide");
+    // No fonts in these tests (letters take no room): the second picture starts where the first ends
+    check(quads.size() == 2 && near(quads[1].rect[0], quads[0].rect[0] + 40.0f), "the second picture follows the first");
+    bool reported = false;
+    for (const std::string& e : ui.info(screen).errors) reported |= e.find("ui/none.png") != std::string::npos;
+    check(reported, "a missing inline picture is reported");
+}
+
 int main() {
     testPenpotExpected();
     testDocument();
@@ -339,6 +362,7 @@ int main() {
     testTessellate();
     testValueModel();
     testAtlasRebuild();
+    testInlineImage();
     std::printf("mkui %s: %d checks, %d failed\n", MKUI_VERSION, checks, failures);
     return failures == 0 ? 0 : 1;
 }

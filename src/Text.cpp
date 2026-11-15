@@ -58,6 +58,7 @@ void shapeGlyphs(const Node& d, const std::string& text, Atlas& atlas, Shaped& o
     out.runs.clear(); // clear keeps capacity: reshaping changed text allocates nothing once warm
     out.glyphs.clear();
     out.lines.clear();
+    out.images.clear();
     out.width = out.height = 0.0f;
     TextRun base;
     base.font = atlas.font(d.text.font);
@@ -73,6 +74,37 @@ void shapeGlyphs(const Node& d, const std::string& text, Atlas& atlas, Shaped& o
     const std::vector<u32>& cps = out.codepoints;
     for (size_t i = 0; i < cps.size(); ++i) {
         const u32 cp = cps[i];
+        if (cp == '<' && i + 5 < cps.size() && cps[i + 1] == 'i' && cps[i + 2] == 'm' && cps[i + 3] == 'g' && cps[i + 4] == ':') {
+            size_t j = i + 5; // <img:path>: a picture one em tall, as wide as its aspect ratio makes it
+            while (j < cps.size() && cps[j] != '>' && cps[j] != '<' && cps[j] != '\n') ++j;
+            if (j < cps.size() && cps[j] == '>' && j > i + 5) {
+                std::string path;
+                for (size_t c = i + 5; c < j; ++c) { // back to UTF-8 (asset paths may hold any letters)
+                    const u32 p = cps[c];
+                    if (p < 0x80) path += static_cast<char>(p);
+                    else if (p < 0x800) path += static_cast<char>(0xC0 | (p >> 6)), path += static_cast<char>(0x80 | (p & 0x3F));
+                    else if (p < 0x10000)
+                        path += static_cast<char>(0xE0 | (p >> 12)), path += static_cast<char>(0x80 | ((p >> 6) & 0x3F)),
+                            path += static_cast<char>(0x80 | (p & 0x3F));
+                    else
+                        path += static_cast<char>(0xF0 | (p >> 18)), path += static_cast<char>(0x80 | ((p >> 12) & 0x3F)),
+                            path += static_cast<char>(0x80 | ((p >> 6) & 0x3F)), path += static_cast<char>(0x80 | (p & 0x3F));
+                }
+                ShapedGlyph g;
+                g.cp = kObjectReplacement;
+                g.run = stack[depth - 1];
+                const TextRun& r = out.runs[g.run];
+                g.font = r.font;
+                g.image = static_cast<i32>(out.images.size());
+                const ImageInfo img = atlas.image(path); // a missing picture takes no room (Ui reports it when drawing)
+                if (img.valid && img.height > 0)
+                    g.advance = r.size * static_cast<f32>(img.width) / static_cast<f32>(img.height) + r.letterSpacing;
+                out.images.push_back(std::move(path));
+                out.glyphs.push_back(g);
+                i = j;
+                continue;
+            }
+        }
         if (cp == '<') { // <n> or </n>
             size_t j = i + 1;
             const bool closing = j < cps.size() && cps[j] == '/';
@@ -112,7 +144,7 @@ void shapeGlyphs(const Node& d, const std::string& text, Atlas& atlas, Shaped& o
             g.advance = g.glyph.advance * r.size + r.letterSpacing;
             if (!out.glyphs.empty()) {
                 const ShapedGlyph& prev = out.glyphs.back();
-                if (prev.font == g.font && prev.run == g.run && prev.cp != '\n')
+                if (prev.font == g.font && prev.run == g.run && prev.cp != '\n' && prev.image < 0)
                     out.glyphs.back().advance += atlas.kerning(g.font, prev.cp, g.cp) * r.size;
             }
         }
@@ -154,7 +186,9 @@ void breakLines(const Node& d, Shaped& s, f32 wrapWidth, f32 maxHeight, Atlas& a
     auto canBreakAfter = [&](u32 i) {
         if (s.glyphs[i].cp == ' ') return true;
         if (d.wrapMode != WrapMode::Syllable) return false;
-        return isWide(s.glyphs[i].cp) || (i + 1 < count && isWide(s.glyphs[i + 1].cp));
+        // Inline pictures break like a syllable: on either side
+        auto wide = [&](u32 k) { return s.glyphs[k].image >= 0 || isWide(s.glyphs[k].cp); };
+        return wide(i) || (i + 1 < count && wide(i + 1));
     };
     auto pushLine = [&](u32 begin, u32 end) {
         ShapedLine l;
