@@ -84,6 +84,7 @@ struct Atlas::Impl {
     Glyph none;
     ImageInfo noImage;
     FontMetrics defaultMetrics;
+    u32 rebuilds = 0; // image atlas clears + glyph rebakes (System::render redraws a frame that saw one)
 
     void scanFonts() {
         fontsScanned = true;
@@ -119,6 +120,7 @@ struct Atlas::Impl {
     }
 
     void resetGlyphs() {
+        ++rebuilds;
         glyphs.clear();
         glyphShelves.clear();
     }
@@ -293,8 +295,9 @@ ImageInfo Atlas::image(const std::string& assetPath) {
         bool placed = m->imageShelves.place(w, h, x, y);
         if (!placed && !m->images.empty()) {
             // Full: start the image atlas over (images bound by path, "src {field}", come and go). Images still in use are
-            // read again on their next draw; quads already emitted this frame may show the wrong pixels for one frame.
+            // read again on their next draw; System::render sees rebuilds() change and draws the frame once more.
             host.log(LogLevel::Warn, "UI: image atlas full (" + std::to_string(m->images.size()) + " images) - rebuilding");
+            ++m->rebuilds;
             m->imageShelves.clear();
             m->images.clear();
             placed = m->imageShelves.place(w, h, x, y);
@@ -331,5 +334,6 @@ void Atlas::reloadChanged() {
 }
 
 u32 Atlas::glyphCount() const { return static_cast<u32>(m->glyphs.size()); }
+u32 Atlas::rebuilds() const { return m->rebuilds; }
 
 } // namespace mkui

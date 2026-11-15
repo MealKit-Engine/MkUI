@@ -234,6 +234,78 @@ void testValueModel() {
     check(ui.info(screen).errors.empty(), "no binding errors");
 }
 
+// Images are "W H" text files decoded to blank pixels, so atlas packing can be driven without PNGs
+class ImageHost : public MemoryHost {
+public:
+    int atlasFull = 0;
+    bool decodeImage(const std::string& bytes, mkui::u32& w, mkui::u32& h, std::vector<mkui::u8>& pixels) override {
+        if (std::sscanf(bytes.c_str(), "%u %u", &w, &h) != 2) return false;
+        pixels.assign(static_cast<size_t>(w) * h * 4, 0);
+        return true;
+    }
+    void log(mkui::LogLevel level, const std::string& message) override {
+        if (message.find("image atlas full") != std::string::npos) ++atlasFull;
+        MemoryHost::log(level, message);
+    }
+};
+
+std::string imageScreen(const char* name, std::initializer_list<const char*> images) {
+    std::string ui = std::string("@format ui 1\nboard ") + name + " 1920 1080\n";
+    int i = 0;
+    for (const char* path : images) {
+        ui += "  image pic" + std::to_string(i) + "\n    pos " + std::to_string(i * 600) + " 0\n    size 500 500\n    src " + path + "\n  end\n";
+        ++i;
+    }
+    return ui + "end\n";
+}
+
+std::vector<mkui::Quad> imageQuads(const std::vector<mkui::Quad>& quads) {
+    std::vector<mkui::Quad> out;
+    for (const mkui::Quad& q : quads)
+        if ((q.flags & 0xF) == mkui::kQuadImage) out.push_back(q);
+    return out;
+}
+
+// The image atlas fills up in the middle of a frame: quads drawn before the restart must not keep the old atlas regions
+void testAtlasRebuild() {
+    ImageHost host;
+    host.files["ui/big.ui"] = imageScreen("big", {"ui/b.png"});
+    host.files["ui/pair.ui"] = imageScreen("pair", {"ui/a.png", "ui/c.png"});
+    host.files["ui/b.png"] = "2000 1500";
+    host.files["ui/a.png"] = "500 500";
+    host.files["ui/c.png"] = "2000 1000";
+    host.files["ui/x.png"] = "2000 1500";
+    host.files["ui/y.png"] = "2000 1500";
+    host.files["ui/huge.ui"] = imageScreen("huge", {"ui/x.png", "ui/y.png"});
+    NoBinder binder;
+    mkui::System ui(host, binder);
+    mkui::Viewport viewport{0, 0, 1920, 1080};
+    mkui::FrameInput input;
+
+    mkui::ScreenId big = ui.open("ui/big.ui");
+    ui.update(input, viewport, 1.0 / 60.0);
+    check(imageQuads(ui.render()).size() == 1, "big picture drawn");
+    ui.close(big);
+    // a.png still fits below the stale b.png (row 1501), c.png doesn't: the atlas restarts after a.png's quad was emitted and
+    // c.png goes to row 0. The redraw reads a.png again, now below c.png (row 1001); without it a.png would point at row 1501.
+    mkui::ScreenId pair = ui.open("ui/pair.ui");
+    ui.update(input, viewport, 1.0 / 60.0);
+    std::vector<mkui::Quad> quads = imageQuads(ui.render());
+    check(host.atlasFull == 1, "image atlas restarted once");
+    check(quads.size() == 2, "the redrawn frame has each picture once");
+    check(quads.size() == 2 && quads[0].uv[1] == 1001.0f / mkui::kAtlasSize && quads[1].uv[1] == 0.0f,
+          "pictures drawn before the restart use the fresh atlas");
+    ui.update(input, viewport, 1.0 / 60.0);
+    check(imageQuads(ui.render()).size() == 2 && host.atlasFull == 1, "next frame is steady");
+    ui.close(pair);
+
+    // Two pictures that can never share the atlas: restart, redraw once, and stop (no endless loop)
+    host.atlasFull = 0;
+    ui.open("ui/huge.ui");
+    ui.update(input, viewport, 1.0 / 60.0);
+    check(imageQuads(ui.render()).size() == 2 && host.atlasFull == 4, "a working set that can't fit is redrawn only once (two restarts a pass)");
+}
+
 } // namespace
 
 // The Penpot plugin converter's expected files (penpot-plugin/test/expected, made by node --test) parse without errors
@@ -266,6 +338,7 @@ int main() {
     testSystem();
     testTessellate();
     testValueModel();
+    testAtlasRebuild();
     std::printf("mkui %s: %d checks, %d failed\n", MKUI_VERSION, checks, failures);
     return failures == 0 ? 0 : 1;
 }

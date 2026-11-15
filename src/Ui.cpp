@@ -334,6 +334,7 @@ struct System::Impl {
     std::vector<WorldDraw> world;
     std::vector<Quad> quads;
     u32 lastQuadCount = 0;
+    u32 atlasRebuilds = 0; // atlas.rebuilds() the shaped text was made with
     // Buffers kept between frames
     std::vector<Scratch> scratch; // per tree depth
     std::vector<Screen*> order;
@@ -1684,6 +1685,14 @@ struct System::Impl {
         }
     }
 
+    // After an atlas restart, shaped text holds glyph atlas coordinates that now belong to other glyphs: shape it again
+    void syncAtlas() {
+        if (atlas.rebuilds() == atlasRebuilds) return;
+        atlasRebuilds = atlas.rebuilds();
+        for (Screen& s : screens)
+            for (RNode& n : s.nodes) n.shapedWidth = -2.0f;
+    }
+
     void reloadChanged() {
         const u64 tt = host.fileTime(kThemeFile);
         const bool themeChanged = tt != themeTime;
@@ -1772,52 +1781,60 @@ void System::drawAt(ScreenId templateScreen, f32 x, f32 y, f32 z, Model viewMode
 }
 
 const std::vector<Quad>& System::render() {
-    m->quads.clear();
     std::vector<Screen*>& order = m->order;
     order.clear();
     for (Screen& s : m->screens) order.push_back(&s);
     std::stable_sort(order.begin(), order.end(), [](const Screen* a, const Screen* b) { return a->layer < b->layer; });
     const f32 noClip[4] = {-1e9f, -1e9f, 1e9f, 1e9f};
-    // World-space UI first (below screen UI)
-    for (const WorldDraw& w : m->world) {
-        Screen* s = m->find(w.screen);
-        if (!s || s->doc.nodes.empty()) continue;
-        const f32(&vp)[4][4] = m->viewProj;
-        const f32 cx = w.x * vp[0][0] + w.y * vp[1][0] + w.z * vp[2][0] + vp[3][0];
-        const f32 cy = w.x * vp[0][1] + w.y * vp[1][1] + w.z * vp[2][1] + vp[3][1];
-        const f32 cw = w.x * vp[0][3] + w.y * vp[1][3] + w.z * vp[2][3] + vp[3][3];
-        if (cw <= 1e-4f && !w.clamp) continue; // behind the camera
-        f32 nx = cx / std::max(cw, 1e-4f), ny = cy / std::max(cw, 1e-4f);
-        if (cw <= 1e-4f) {
-            nx = -nx;
-            ny = -ny;
+    // A full atlas restarts while quads are emitted (Atlas::image, glyph rebake); quads emitted before that point at regions that
+    // now hold other pictures, so the frame is drawn once more against the fresh atlas. Only once: a working set that can't fit
+    // would restart on every pass.
+    for (int pass = 0; pass < 2; ++pass) {
+        m->syncAtlas();
+        const u32 rebuildsBefore = m->atlas.rebuilds();
+        m->quads.clear();
+        // World-space UI first (below screen UI)
+        for (const WorldDraw& w : m->world) {
+            Screen* s = m->find(w.screen);
+            if (!s || s->doc.nodes.empty()) continue;
+            const f32(&vp)[4][4] = m->viewProj;
+            const f32 cx = w.x * vp[0][0] + w.y * vp[1][0] + w.z * vp[2][0] + vp[3][0];
+            const f32 cy = w.x * vp[0][1] + w.y * vp[1][1] + w.z * vp[2][1] + vp[3][1];
+            const f32 cw = w.x * vp[0][3] + w.y * vp[1][3] + w.z * vp[2][3] + vp[3][3];
+            if (cw <= 1e-4f && !w.clamp) continue; // behind the camera
+            f32 nx = cx / std::max(cw, 1e-4f), ny = cy / std::max(cw, 1e-4f);
+            if (cw <= 1e-4f) {
+                nx = -nx;
+                ny = -ny;
+            }
+            if (!w.clamp && (nx < -1.2f || nx > 1.2f || ny < -1.2f || ny > 1.2f)) continue;
+            if (w.clamp) {
+                nx = std::clamp(nx, -0.95f, 0.95f);
+                ny = std::clamp(ny, -0.95f, 0.95f);
+            }
+            const f32 px = m->viewX + (nx * 0.5f + 0.5f) * m->viewW, py = m->viewY + (0.5f - ny * 0.5f) * m->viewH;
+            const Model keep = s->vm;
+            s->vm = w.vm;
+            const f32 bw = std::max(1.0f, s->doc.boardW), bh = std::max(1.0f, s->doc.boardH);
+            const f32 k = std::min(m->viewW / 1920.0f, m->viewH / 1080.0f) * m->uiScale; // scale relative to the reference screen
+            if (s->rebuild || !m->rebind(*s)) m->rebuild(*s);
+            s->scale = k;
+            s->rootW = bw;
+            s->rootH = bh;
+            m->layout(*s, bw, bh);
+            s->originX = px - bw * 0.5f * k;
+            s->originY = py - bh * 0.5f * k;
+            m->emitNode(*s, 0, 1.0f, noClip);
+            s->vm = keep; // nodes keep pointing at this draw's view model until the next draw rebinds them
         }
-        if (!w.clamp && (nx < -1.2f || nx > 1.2f || ny < -1.2f || ny > 1.2f)) continue;
-        if (w.clamp) {
-            nx = std::clamp(nx, -0.95f, 0.95f);
-            ny = std::clamp(ny, -0.95f, 0.95f);
+        for (Screen* s : order) {
+            if (s->worldTemplate || s->doc.nodes.empty()) continue;
+            s->originX = m->viewX;
+            s->originY = m->viewY;
+            m->prepare(*s, m->viewW, m->viewH);
+            if (s->nodes[0].visible) m->emitNode(*s, 0, 1.0f, noClip);
         }
-        const f32 px = m->viewX + (nx * 0.5f + 0.5f) * m->viewW, py = m->viewY + (0.5f - ny * 0.5f) * m->viewH;
-        const Model keep = s->vm;
-        s->vm = w.vm;
-        const f32 bw = std::max(1.0f, s->doc.boardW), bh = std::max(1.0f, s->doc.boardH);
-        const f32 k = std::min(m->viewW / 1920.0f, m->viewH / 1080.0f) * m->uiScale; // scale relative to the reference screen
-        if (s->rebuild || !m->rebind(*s)) m->rebuild(*s);
-        s->scale = k;
-        s->rootW = bw;
-        s->rootH = bh;
-        m->layout(*s, bw, bh);
-        s->originX = px - bw * 0.5f * k;
-        s->originY = py - bh * 0.5f * k;
-        m->emitNode(*s, 0, 1.0f, noClip);
-        s->vm = keep; // nodes keep pointing at this draw's view model until the next draw rebinds them
-    }
-    for (Screen* s : order) {
-        if (s->worldTemplate || s->doc.nodes.empty()) continue;
-        s->originX = m->viewX;
-        s->originY = m->viewY;
-        m->prepare(*s, m->viewW, m->viewH);
-        if (s->nodes[0].visible) m->emitNode(*s, 0, 1.0f, noClip);
+        if (m->atlas.rebuilds() == rebuildsBefore) break;
     }
     m->lastQuadCount = static_cast<u32>(m->quads.size());
     return m->quads;

@@ -8,7 +8,8 @@
 //   Fonts: .ttf/.otf in assets/fonts found by file name ("Pretendard-Medium"). Only glyphs in use are baked to SDF at runtime with stb_truetype.
 //         One font file per weight/italic. Baked at one size (kBakePixels) and used for all sizes.
 //   Images: PNGs relative to assets (decoded by the host). Read on first use and put into the image atlas.
-// When an atlas fills up, it's cleared and rebaked (warning); images are then read again as they're drawn. View-side only, so unrelated to determinism.
+// When an atlas fills up, it's cleared and rebaked (warning); images are then read again as they're drawn, and System::render
+// draws that frame once more so no quad keeps the old atlas regions. View-side only, so unrelated to determinism.
 namespace mkui {
 
 class Host;
@@ -55,6 +56,8 @@ public:
     // Rereads if files changed (called every 0.25 s)
     void reloadChanged();
     u32 glyphCount() const;
+    // Counts atlas restarts (image atlas cleared, glyphs rebaked). Atlas coordinates handed out before a change are stale.
+    u32 rebuilds() const;
 
 private:
     struct Impl;
