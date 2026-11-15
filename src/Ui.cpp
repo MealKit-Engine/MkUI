@@ -1161,10 +1161,14 @@ struct System::Impl {
         const f32 sdfUnits = atlas.sdfUnitsPerPixel();
         for (const ShapedLine& line : sh.lines) {
             f32 x = n.rect.x;
-            if (d.textAlign == TextAlign::Center) x += (n.rect.w - line.width) * 0.5f;
-            else if (d.textAlign == TextAlign::Right) x += n.rect.w - line.width;
+            // squeeze: a line wider than the box fills it, every x taken toward its start by sx
+            const f32 sx = d.squeeze && line.width > n.rect.w && line.width > 0.0f ? n.rect.w / line.width : 1.0f;
+            if (sx >= 1.0f && d.textAlign == TextAlign::Center) x += (n.rect.w - line.width) * 0.5f;
+            else if (sx >= 1.0f && d.textAlign == TextAlign::Right) x += n.rect.w - line.width;
+            const f32 lineX = x;
+            auto sq = [&](f32 at) { return lineX + (at - lineX) * sx; };
             const f32 baseline = y + (line.height - (line.ascent + line.descent)) * 0.5f + line.ascent;
-            caretX = x + line.width;
+            caretX = x + line.width * sx;
             caretY = y;
             caretH = line.height;
             for (u32 i = line.begin; i < line.end; ++i) {
@@ -1182,9 +1186,9 @@ struct System::Impl {
                         const f32 h = run.size, w = g.advance - run.letterSpacing;
                         const f32 top = baseline + (fm.descent - fm.ascent) * run.size * 0.5f - h * 0.5f;
                         Quad q;
-                        q.rect[0] = s.originX + x * k;
+                        q.rect[0] = s.originX + sq(x) * k;
                         q.rect[1] = s.originY + top * k;
-                        q.rect[2] = w * k;
+                        q.rect[2] = w * sx * k;
                         q.rect[3] = h * k;
                         std::memcpy(q.clip, clip, sizeof(q.clip));
                         q.uv[0] = img.u0;
@@ -1201,9 +1205,9 @@ struct System::Impl {
                 }
                 if (g.glyph.u1 > g.glyph.u0) {
                     Quad q;
-                    q.rect[0] = s.originX + (x + g.glyph.x0 * run.size) * k;
+                    q.rect[0] = s.originX + sq(x + g.glyph.x0 * run.size) * k;
                     q.rect[1] = s.originY + (baseline + g.glyph.y0 * run.size) * k;
-                    q.rect[2] = (g.glyph.x1 - g.glyph.x0) * run.size * k;
+                    q.rect[2] = (g.glyph.x1 - g.glyph.x0) * run.size * sx * k;
                     q.rect[3] = (g.glyph.y1 - g.glyph.y0) * run.size * k;
                     std::memcpy(q.clip, clip, sizeof(q.clip));
                     q.uv[0] = g.glyph.u0;
@@ -1220,9 +1224,9 @@ struct System::Impl {
                     const f32 thick = std::max(1.0f / k, run.size * 0.06f);
                     auto deco = [&](f32 dy) {
                         Quad q;
-                        q.rect[0] = s.originX + x * k;
+                        q.rect[0] = s.originX + sq(x) * k;
                         q.rect[1] = s.originY + (baseline + dy) * k;
-                        q.rect[2] = g.advance * k;
+                        q.rect[2] = g.advance * sx * k;
                         q.rect[3] = thick * k;
                         std::memcpy(q.clip, clip, sizeof(q.clip));
                         q.color0 = color;
@@ -1913,7 +1917,7 @@ std::vector<NodeBox> System::boxes(ScreenId screen) const {
         for (const RNode& n : s->nodes) {
             const Node& d = s->doc.nodes[n.src];
             const bool text = d.kind == NodeKind::Text;
-            const bool overflow = text && n.visible && (n.shaped.truncated || n.shaped.width > n.rect.w + 0.5f || n.shaped.height > n.rect.h + 0.5f);
+            const bool overflow = text && n.visible && (n.shaped.truncated || (n.shaped.width > n.rect.w + 0.5f && !d.squeeze) || n.shaped.height > n.rect.h + 0.5f);
             out.push_back({d.name, d.id, n.rect.x, n.rect.y, n.rect.w, n.rect.h, d.depth, n.visible, text, n.src, overflow});
         }
     return out;

@@ -165,6 +165,7 @@ struct Node {
     WrapMode wrapMode = WrapMode::Syllable;
     bool ellipsis = false;
     u32 maxLines = 0;
+    bool squeeze = false; // a line wider than the box is squeezed sideways to fit it (the font size stays; Scratch-like)
 
     // Bindings (view model field paths, ! in front inverts)
     std::string visibleField, disabledField, widthRatioField, colorField;

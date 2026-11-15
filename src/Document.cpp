@@ -406,6 +406,7 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
         if (args == 1 && (t[1] == "ellipsis" || t[1] == "clip")) return n.ellipsis = t[1] == "ellipsis", true;
         return fail("ellipsis|clip");
     }
+    if (k == "squeeze") return args == 0 ? (n.squeeze = true, true) : fail("squeeze (no arguments)");
     if (k == "maxLines") {
         f32 lines = 0;
         if (!num(1, lines) || lines < 0) return fail("number");

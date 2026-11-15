@@ -354,6 +354,32 @@ void testInlineImage() {
     check(reported, "a missing inline picture is reported");
 }
 
+void testSqueeze() {
+    ImageHost host;
+    host.files["ui/burn.png"] = "60 30"; // 2:1, one em tall = 40 wide at fontSize 20
+    // Five pictures (200 wide) in a 100 wide box: squeezed to half; the same line unsqueezed overflows; a short line stays
+    host.files["ui/squeeze.ui"] = "@format ui 1\nboard squeeze 1920 1080\n"
+                                  "  text wide\n    pos 10 0\n    size 100 40\n    fontSize 20\n    wrap none\n    squeeze\n    textAlign center\n"
+                                  "    content <img:ui/burn.png><img:ui/burn.png><img:ui/burn.png><img:ui/burn.png><img:ui/burn.png>\n  end\n"
+                                  "  text plain\n    pos 10 100\n    size 100 40\n    fontSize 20\n    wrap none\n"
+                                  "    content <img:ui/burn.png><img:ui/burn.png><img:ui/burn.png><img:ui/burn.png><img:ui/burn.png>\n  end\n"
+                                  "  text short\n    pos 10 200\n    size 100 40\n    fontSize 20\n    squeeze\n    textAlign center\n"
+                                  "    content <img:ui/burn.png>\n  end\nend\n";
+    NoBinder binder;
+    mkui::System ui(host, binder);
+    ui.open("ui/squeeze.ui");
+    mkui::Viewport viewport{0, 0, 1920, 1080};
+    mkui::FrameInput input;
+    ui.update(input, viewport, 1.0 / 60.0);
+    const std::vector<mkui::Quad> quads = imageQuads(ui.render());
+    check(quads.size() == 11, "squeeze: all pictures drawn");
+    if (quads.size() != 11) return;
+    check(near(quads[0].rect[0], 10.0f) && near(quads[0].rect[2], 20.0f), "squeeze: a wide line starts at the box and is half as wide");
+    check(near(quads[4].rect[0] + quads[4].rect[2], 110.0f), "squeeze: the squeezed line ends at the box's right edge");
+    check(near(quads[5].rect[2], 40.0f) && near(quads[9].rect[0], 170.0f), "no squeeze: the same line runs past the box");
+    check(near(quads[10].rect[2], 40.0f) && near(quads[10].rect[0], 40.0f), "squeeze: a line that fits keeps its size and alignment");
+}
+
 int main() {
     testPenpotExpected();
     testDocument();
@@ -363,6 +389,7 @@ int main() {
     testValueModel();
     testAtlasRebuild();
     testInlineImage();
+    testSqueeze();
     std::printf("mkui %s: %d checks, %d failed\n", MKUI_VERSION, checks, failures);
     return failures == 0 ? 0 : 1;
 }
