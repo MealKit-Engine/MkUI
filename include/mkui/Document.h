@@ -180,6 +180,9 @@ struct Node {
     std::string brightnessField; // image nodes: adds a number field (-1..1) to the brightness
     std::string fontSizeField;   // text nodes: the font size comes from a number field (logical units, > 0)
     std::string outlineField, outlineColorField; // text nodes: outline width (logical units) and colour from fields
+    // text nodes: every line drawn this much narrower sideways (a number field, 0..1; 1 = as shaped), before `squeeze`
+    // fits what is still too wide. Scratch-like fixed narrowing, e.g. long numbers at 90%
+    std::string squeezeField;
 
     // Image: mirror the picture (flip horizontal / vertical)
     bool flipX = false, flipY = false;

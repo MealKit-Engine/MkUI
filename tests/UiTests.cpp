@@ -389,6 +389,29 @@ void testSqueeze() {
     check(near(quads[10].rect[2], 40.0f) && near(quads[10].rect[0], 40.0f), "squeeze: a line that fits keeps its size and alignment");
 }
 
+void testSqueezeField() {
+    ImageHost host;
+    host.files["ui/burn.png"] = "60 30"; // one em tall = 40 wide at fontSize 20
+    // Two pictures (80 wide) at half width, centred in a 100 wide box; four (160) at half still overflow 60 wide and squeeze fits them
+    host.files["ui/narrow.ui"] = "@format ui 1\nboard narrow 1920 1080\n"
+                                 "  text centred\n    pos 10 0\n    size 100 40\n    fontSize 20\n    wrap none\n    squeezeField n\n    textAlign center\n"
+                                 "    content <img:ui/burn.png><img:ui/burn.png>\n  end\n"
+                                 "  text fitted\n    pos 10 100\n    size 60 40\n    fontSize 20\n    wrap none\n    squeeze\n    squeezeField n\n"
+                                 "    content <img:ui/burn.png><img:ui/burn.png><img:ui/burn.png><img:ui/burn.png>\n  end\nend\n";
+    mkui::ValueModel vm;
+    vm.set("n", 0.5f);
+    mkui::System ui(host, mkui::valueBinder());
+    ui.bind(ui.open("ui/narrow.ui"), vm.model());
+    mkui::Viewport viewport{0, 0, 1920, 1080};
+    mkui::FrameInput input;
+    ui.update(input, viewport, 1.0 / 60.0);
+    const std::vector<mkui::Quad> quads = imageQuads(ui.render());
+    check(quads.size() == 6, "squeezeField: all pictures drawn");
+    if (quads.size() != 6) return;
+    check(near(quads[0].rect[2], 20.0f) && near(quads[0].rect[0], 40.0f), "squeezeField: half as wide, the narrowed line centred");
+    check(near(quads[2].rect[0], 10.0f) && near(quads[5].rect[0] + quads[5].rect[2], 70.0f), "squeezeField + squeeze: still too wide, fills the box");
+}
+
 int main() {
     testPenpotExpected();
     testDocument();
@@ -399,6 +422,7 @@ int main() {
     testAtlasRebuild();
     testInlineImage();
     testSqueeze();
+    testSqueezeField();
     std::printf("mkui %s: %d checks, %d failed\n", MKUI_VERSION, checks, failures);
     return failures == 0 ? 0 : 1;
 }

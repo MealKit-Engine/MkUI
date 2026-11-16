@@ -449,6 +449,7 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
     if (k == "fontSizeField") return args == 1 ? (n.fontSizeField = t[1], true) : fail("fontSizeField <field>");
     if (k == "outlineField") return args == 1 ? (n.outlineField = t[1], true) : fail("outlineField <field>");
     if (k == "outlineColorField") return args == 1 ? (n.outlineColorField = t[1], true) : fail("outlineColorField <field>");
+    if (k == "squeezeField") return args == 1 ? (n.squeezeField = t[1], true) : fail("squeezeField <field>");
     if (k == "brightnessField") return args == 1 ? (n.brightnessField = t[1], true) : fail("brightnessField <field>");
     if (k == "flip") {
         bool ok = args >= 1;

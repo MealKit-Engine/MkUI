@@ -1178,12 +1178,20 @@ struct System::Impl {
                 outlineColored = true;
             }
         }
+        // squeezeField: every line narrowed sideways by a fixed ratio
+        f32 narrow = 1.0f;
+        if (!d.squeezeField.empty()) {
+            Value nv;
+            if (resolve(s, n, d.squeezeField, nv)) narrow = static_cast<f32>(std::clamp(numberOf(nv), 0.0, 1.0));
+            else missingField(s, d.squeezeField);
+        }
         for (const ShapedLine& line : sh.lines) {
             f32 x = n.rect.x;
-            // squeeze: a line wider than the box fills it, every x taken toward its start by sx
-            const f32 sx = d.squeeze && line.width > n.rect.w && line.width > 0.0f ? n.rect.w / line.width : 1.0f;
-            if (sx >= 1.0f && d.textAlign == TextAlign::Center) x += (n.rect.w - line.width) * 0.5f;
-            else if (sx >= 1.0f && d.textAlign == TextAlign::Right) x += n.rect.w - line.width;
+            // squeeze: a line still wider than the box fills it; every x is taken toward the line's start by sx
+            const f32 narrowed = line.width * narrow;
+            const f32 sx = d.squeeze && narrowed > n.rect.w && line.width > 0.0f ? n.rect.w / line.width : narrow;
+            if (d.textAlign == TextAlign::Center) x += (n.rect.w - line.width * sx) * 0.5f;
+            else if (d.textAlign == TextAlign::Right) x += n.rect.w - line.width * sx;
             const f32 lineX = x;
             auto sq = [&](f32 at) { return lineX + (at - lineX) * sx; };
             const f32 baseline = y + (line.height - (line.ascent + line.descent)) * 0.5f + line.ascent;
