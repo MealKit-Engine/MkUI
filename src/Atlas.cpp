@@ -131,14 +131,19 @@ struct Atlas::Impl {
         fontsScanned = true;
         fonts.clear();
         if (!host) return;
+        // In file name order whatever the extension: the first is the default font (text without `font`), so adding a
+        // .ttf beside a project's .otf body font doesn't take its place, and the listing order of the host doesn't matter
+        std::vector<std::string> files;
         for (const char* ext : {".ttf", ".otf", ".ttc"})
-            for (const std::string& file : host->listFiles("fonts", ext)) {
-                FontFile f;
-                f.name = file.substr(0, file.size() - 4);
-                f.path = "fonts/" + file;
-                if (!loadFont(f)) continue;
-                fonts.push_back(std::move(f));
-            }
+            for (const std::string& file : host->listFiles("fonts", ext)) files.push_back(file);
+        std::sort(files.begin(), files.end());
+        for (const std::string& file : files) {
+            FontFile f;
+            f.name = file.substr(0, file.size() - 4);
+            f.path = "fonts/" + file;
+            if (!loadFont(f)) continue;
+            fonts.push_back(std::move(f));
+        }
         if (fonts.empty()) host->log(LogLevel::Warn, "UI: no fonts in assets/fonts - text is not drawn");
     }
 
