@@ -295,14 +295,15 @@ void testAtlasRebuild() {
     ui.update(input, viewport, 1.0 / 60.0);
     check(imageQuads(ui.render()).size() == 1, "big picture drawn");
     ui.close(big);
-    // a.png still fits below the stale b.png (row 1501), c.png doesn't: the atlas restarts after a.png's quad was emitted and
-    // c.png goes to row 0. The redraw reads a.png again, now below c.png (row 1001); without it a.png would point at row 1501.
+    // a.png still fits below the stale b.png (shelf at row 1503: 1500 + a texel of border each side + the 1 px gap), c.png
+    // doesn't: the atlas restarts after a.png's quad was emitted and c.png goes to the top (its texels from row 1). The
+    // redraw reads a.png again, now below c.png (shelf at 1003, texels from 1004); without it a.png would point at row 1504.
     mkui::ScreenId pair = ui.open("ui/pair.ui");
     ui.update(input, viewport, 1.0 / 60.0);
     std::vector<mkui::Quad> quads = imageQuads(ui.render());
     check(host.atlasFull == 1, "image atlas restarted once");
     check(quads.size() == 2, "the redrawn frame has each picture once");
-    check(quads.size() == 2 && quads[0].uv[1] == 1001.0f / mkui::kAtlasSize && quads[1].uv[1] == 0.0f,
+    check(quads.size() == 2 && quads[0].uv[1] == 1004.0f / mkui::kAtlasSize && quads[1].uv[1] == 1.0f / mkui::kAtlasSize,
           "pictures drawn before the restart use the fresh atlas");
     ui.update(input, viewport, 1.0 / 60.0);
     check(imageQuads(ui.render()).size() == 2 && host.atlasFull == 1, "next frame is steady");
