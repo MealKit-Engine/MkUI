@@ -14,7 +14,8 @@ struct Quad // 112 bytes
     uint color0;     // fill (gradient start), RGBA8 straight alpha
     uint color1;     // gradient end / image brightness
     uint strokeColor;
-    uint flags;      // 0-3 kind (0 shape, 1 image, 2 text, 3 shadow), 4-5 fill (0 solid, 1 linear, 2 radial)
+    uint flags;      // 0-3 kind (0 shape, 1 image, 2 text, 3 shadow), 4-5 fill (0 solid, 1 linear, 2 radial),
+                     // 16-31 horizontal shear (signed, 1/10000; x -= shear * y before rotation)
     float strokeWidth;
     float rotation;  // radians (around the box center)
     float softness;  // shadow blur (pixels)
@@ -52,8 +53,10 @@ VSOutput VSMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
     float margin = q.softness * 2.0 + 1.0; // half pixel outside the border + shadow blur
     float2 half = q.rect.zw * 0.5;
     float2 local = lerp(-half - margin, half + margin, c);
+    float shear = float(asint(q.flags) >> 16) / 10000.0; // italic text; the pixel shader works unsheared
+    float2 sheared = float2(local.x - shear * local.y, local.y);
     float s = sin(q.rotation), co = cos(q.rotation);
-    float2 rotated = float2(local.x * co - local.y * s, local.x * s + local.y * co);
+    float2 rotated = float2(sheared.x * co - sheared.y * s, sheared.x * s + sheared.y * co);
     float2 pixel = q.rect.xy + half + rotated;
     VSOutput o;
     o.position = float4(pixel.x / screenSize.x * 2.0 - 1.0, 1.0 - pixel.y / screenSize.y * 2.0, 0.0, 1.0);

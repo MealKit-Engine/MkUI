@@ -183,6 +183,10 @@ struct Node {
     // text nodes: every line drawn this much narrower sideways (a number field, 0..1; 1 = as shaped), before `squeeze`
     // fits what is still too wide. Scratch-like fixed narrowing, e.g. long numbers at 90%
     std::string squeezeField;
+    // text nodes: glyphs slanted like italics by this many degrees (positive leans the tops right), sheared about each
+    // line's baseline; skewField takes it from a number field instead. For fonts without an italic face
+    f32 skew = 0.0f;
+    std::string skewField;
 
     // Image: mirror the picture (flip horizontal / vertical)
     bool flipX = false, flipY = false;

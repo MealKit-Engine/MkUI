@@ -31,7 +31,7 @@ constexpr f32 kPi = 3.14159265358979f;
 struct Builder {
     const Quad& q;
     DrawList& out;
-    f32 halfW, halfH, sinR, cosR;
+    f32 halfW, halfH, sinR, cosR, shear;
     u32 segments; // points per corner arc minus one
     bool textured;
     f32 ringX[4 * 13], ringY[4 * 13];
@@ -42,6 +42,7 @@ struct Builder {
         halfH = q.rect[3] * 0.5f;
         sinR = std::sin(q.rotation);
         cosR = std::cos(q.rotation);
+        shear = quadShear(q.flags);
         f32 maxRadius = 0.0f;
         for (f32 r : q.radii) maxRadius = std::max(maxRadius, r);
         maxRadius = std::min(maxRadius, std::min(halfW, halfH));
@@ -88,8 +89,9 @@ struct Builder {
 
     u32 vertex(f32 lx, f32 ly, u32 color) {
         DrawVertex v;
-        v.x = q.rect[0] + halfW + lx * cosR - ly * sinR;
-        v.y = q.rect[1] + halfH + lx * sinR + ly * cosR;
+        const f32 px = lx - shear * ly; // italic shear (flags bits 16-31), before rotation; UVs stay unsheared
+        v.x = q.rect[0] + halfW + px * cosR - ly * sinR;
+        v.y = q.rect[1] + halfH + px * sinR + ly * cosR;
         if (textured) {
             const f32 bx = (lx + halfW) / std::max(q.rect[2], 1e-3f), by = (ly + halfH) / std::max(q.rect[3], 1e-3f);
             v.u = q.uv[0] + (q.uv[2] - q.uv[0]) * bx;

@@ -1185,6 +1185,16 @@ struct System::Impl {
             if (resolve(s, n, d.squeezeField, nv)) narrow = static_cast<f32>(std::clamp(numberOf(nv), 0.0, 1.0));
             else missingField(s, d.squeezeField);
         }
+        // skew: glyphs slanted about the baseline. Each quad is sheared about its own centre (flags bits 16-31) and moved
+        // by the shear of its centre's height above the baseline, so the whole line leans as one
+        f32 skewDeg = d.skew;
+        if (!d.skewField.empty()) {
+            Value kv;
+            if (resolve(s, n, d.skewField, kv)) skewDeg = static_cast<f32>(std::clamp(numberOf(kv), -60.0, 60.0));
+            else missingField(s, d.skewField);
+        }
+        const f32 shear = std::tan(skewDeg * 3.14159265f / 180.0f);
+        const u32 shearBits = skewDeg != 0.0f ? quadShearBits(shear) : 0u;
         for (const ShapedLine& line : sh.lines) {
             f32 x = n.rect.x;
             // squeeze: a line still wider than the box fills it; every x is taken toward the line's start by sx
@@ -1195,6 +1205,12 @@ struct System::Impl {
             const f32 lineX = x;
             auto sq = [&](f32 at) { return lineX + (at - lineX) * sx; };
             const f32 baseline = y + (line.height - (line.ascent + line.descent)) * 0.5f + line.ascent;
+            const f32 baselinePx = s.originY + baseline * k;
+            auto slant = [&](Quad& q) { // lean q about the baseline (no-op without skew)
+                if (!shearBits) return;
+                q.rect[0] -= shear * (q.rect[1] + q.rect[3] * 0.5f - baselinePx);
+                q.flags |= shearBits;
+            };
             caretX = x + line.width * sx;
             caretY = y;
             caretH = line.height;
@@ -1225,6 +1241,7 @@ struct System::Impl {
                         q.color0 = withAlpha(0xFFFFFFFFu, opacity);
                         q.color1 = 0;
                         q.flags = kQuadImage;
+                        slant(q);
                         quads.push_back(q);
                     }
                     x += g.advance;
@@ -1248,6 +1265,7 @@ struct System::Impl {
                         q.strokeWidth = std::min(outline, run.size * kMaxOutlineEm) * k;
                         q.strokeColor = outlineColored ? withAlpha(outlineColor, opacity) : color;
                     }
+                    slant(q);
                     quads.push_back(q);
                 }
                 if ((run.underline || run.strike) && g.cp != '\n') {
@@ -1262,6 +1280,7 @@ struct System::Impl {
                         std::memcpy(q.clip, clip, sizeof(q.clip));
                         q.color0 = color;
                         q.flags = kQuadShape;
+                        slant(q);
                         quads.push_back(q);
                     };
                     if (run.underline) deco(run.size * 0.12f);

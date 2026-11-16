@@ -64,6 +64,15 @@ struct Quad {
 static_assert(sizeof(Quad) == 112, "Quad must match the HLSL layout");
 inline constexpr u32 kQuadShape = 0, kQuadImage = 1, kQuadGlyph = 2, kQuadShadow = 3;
 inline constexpr u32 kQuadLinear = 1u << 4, kQuadRadial = 2u << 4;
+// flags bits 16-31: horizontal shear as a signed 16-bit count of 1/10000 (italic text): before rotation, a point at y
+// pixels below the box centre moves x by -shear * y. 0 = none
+inline constexpr f32 kQuadShearUnit = 10000.0f;
+inline u32 quadShearBits(f32 shear) {
+    const f32 v = shear * kQuadShearUnit;
+    const i32 q = static_cast<i32>(v < 0.0f ? v - 0.5f : v + 0.5f);
+    return static_cast<u32>(static_cast<u16>(static_cast<i16>(q < -32767 ? -32767 : q > 32767 ? 32767 : q))) << 16;
+}
+inline f32 quadShear(u32 flags) { return static_cast<f32>(static_cast<i16>(static_cast<u16>(flags >> 16))) / kQuadShearUnit; }
 
 struct ScreenInfo {
     std::string path;

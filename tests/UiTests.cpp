@@ -412,6 +412,39 @@ void testSqueezeField() {
     check(near(quads[2].rect[0], 10.0f) && near(quads[5].rect[0] + quads[5].rect[2], 70.0f), "squeezeField + squeeze: still too wide, fills the box");
 }
 
+void testSkew() {
+    ImageHost host;
+    host.files["ui/burn.png"] = "60 30";
+    // The same picture with and without skew: slanted, it carries the shear and moves right (its centre is above the baseline)
+    host.files["ui/skew.ui"] = "@format ui 1\nboard skew 1920 1080\n"
+                               "  text plain\n    pos 10 0\n    size 100 40\n    fontSize 20\n    wrap none\n    content <img:ui/burn.png>\n  end\n"
+                               "  text slanted\n    pos 10 100\n    size 100 40\n    fontSize 20\n    wrap none\n    skew 10\n    content <img:ui/burn.png>\n  end\n"
+                               "  text field\n    pos 10 200\n    size 100 40\n    fontSize 20\n    wrap none\n    skewField k\n    content <img:ui/burn.png>\n  end\nend\n";
+    mkui::ValueModel vm;
+    vm.set("k", -10.0f);
+    mkui::System ui(host, mkui::valueBinder());
+    ui.bind(ui.open("ui/skew.ui"), vm.model());
+    mkui::Viewport viewport{0, 0, 1920, 1080};
+    mkui::FrameInput input;
+    ui.update(input, viewport, 1.0 / 60.0);
+    const std::vector<mkui::Quad> quads = imageQuads(ui.render());
+    check(quads.size() == 3, "skew: all pictures drawn");
+    if (quads.size() != 3) return;
+    check(mkui::quadShear(quads[0].flags) == 0.0f, "skew: none by default");
+    check(near(mkui::quadShear(quads[1].flags), 0.1763f) && quads[1].rect[0] > quads[0].rect[0], "skew 10: sheared, leaning right about the baseline");
+    check(near(mkui::quadShear(quads[2].flags), -0.1763f) && quads[2].rect[0] < quads[0].rect[0], "skewField -10: leaning left");
+    check((quads[1].flags & 0xF) == mkui::kQuadImage, "skew: the kind bits are kept");
+    mkui::DrawList list;
+    mkui::tessellate(&quads[1], 1, list);
+    float topX = 1e9f, bottomX = 1e9f, topY = 1e9f, bottomY = -1e9f;
+    for (const mkui::DrawVertex& v : list.vertices) topY = std::min(topY, v.y), bottomY = std::max(bottomY, v.y);
+    for (const mkui::DrawVertex& v : list.vertices) {
+        if (near(v.y, topY)) topX = std::min(topX, v.x);
+        if (near(v.y, bottomY)) bottomX = std::min(bottomX, v.x);
+    }
+    check(topX > bottomX, "skew: tessellated tops lean right");
+}
+
 int main() {
     testPenpotExpected();
     testDocument();
@@ -423,6 +456,7 @@ int main() {
     testInlineImage();
     testSqueeze();
     testSqueezeField();
+    testSkew();
     std::printf("mkui %s: %d checks, %d failed\n", MKUI_VERSION, checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -372,6 +372,7 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
     if (k == "color") return (args == 1 && parseColor(t[1], v.textColor) && (v.hasTextColor = true)) || fail("color");
     if (k == "letterSpacing") return num(1, n.text.letterSpacing) || fail("number");
     if (k == "lineHeight") return num(1, n.lineHeight) || fail("multiple of the font size");
+    if (k == "skew") return (args == 1 && num(1, n.skew) && n.skew > -60.0f && n.skew < 60.0f) || fail("skew <degrees, -60..60>");
     if (k == "underline") return n.text.underline = true;
     if (k == "strike") return n.text.strike = true;
     if (k == "transform") {
@@ -450,6 +451,7 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
     if (k == "outlineField") return args == 1 ? (n.outlineField = t[1], true) : fail("outlineField <field>");
     if (k == "outlineColorField") return args == 1 ? (n.outlineColorField = t[1], true) : fail("outlineColorField <field>");
     if (k == "squeezeField") return args == 1 ? (n.squeezeField = t[1], true) : fail("squeezeField <field>");
+    if (k == "skewField") return args == 1 ? (n.skewField = t[1], true) : fail("skewField <field>");
     if (k == "brightnessField") return args == 1 ? (n.brightnessField = t[1], true) : fail("brightnessField <field>");
     if (k == "flip") {
         bool ok = args >= 1;
