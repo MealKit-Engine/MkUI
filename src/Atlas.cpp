@@ -16,6 +16,32 @@ constexpr u32 kSize = kAtlasSize;
 constexpr f32 kOnEdge = 128.0f;
 constexpr f32 kDistScale = kOnEdge / static_cast<f32>(kSdfPadding); // SDF value per baked pixel
 
+// Images are sampled with straight alpha and filtered (bilinear), so a texel beside an edge mixes in the colour of its
+// transparent neighbours, usually black (what most exporters and browser canvases write there): a dark fringe. Give each
+// transparent texel, and each nearly transparent one (a canvas rounds their colour toward black), the alpha-weighted
+// colour of its 3x3 neighbourhood. Alpha stays, so what is drawn only changes along edges.
+constexpr u8 kBleedAlpha = 32; // below this a texel's own colour counts by its alpha only
+
+void bleedEdges(std::vector<u8>& rgba, u32 w, u32 h) {
+    if (rgba.size() < static_cast<size_t>(w) * h * 4) return;
+    const std::vector<u8> src = rgba;
+    for (u32 y = 0; y < h; ++y)
+        for (u32 x = 0; x < w; ++x) {
+            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+            if (src[i + 3] >= kBleedAlpha) continue;
+            u32 sum[3] = {0, 0, 0}, weight = 0;
+            for (u32 ny = y > 0 ? y - 1 : 0; ny <= y + 1 && ny < h; ++ny)
+                for (u32 nx = x > 0 ? x - 1 : 0; nx <= x + 1 && nx < w; ++nx) {
+                    const size_t j = (static_cast<size_t>(ny) * w + nx) * 4;
+                    const u32 a = src[j + 3];
+                    for (int c = 0; c < 3; ++c) sum[c] += src[j + c] * a;
+                    weight += a;
+                }
+            if (weight == 0) continue;
+            for (int c = 0; c < 3; ++c) rgba[i + c] = static_cast<u8>((sum[c] + weight / 2) / weight);
+        }
+}
+
 // Simple row-based rectangle packing (UI glyphs/images are similar in size)
 struct Shelves {
     struct Shelf {
@@ -303,6 +329,7 @@ ImageInfo Atlas::image(const std::string& assetPath) {
             placed = m->imageShelves.place(w, h, x, y);
         }
         if (placed) {
+            bleedEdges(pixels, w, h);
             host.uploadAtlas(AtlasKind::Images, x, y, w, h, pixels.data());
             img.info = {true, w, h, static_cast<f32>(x) / kSize, static_cast<f32>(y) / kSize, static_cast<f32>(x + w) / kSize,
                         static_cast<f32>(y + h) / kSize};
