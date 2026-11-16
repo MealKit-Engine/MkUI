@@ -42,6 +42,21 @@ void bleedEdges(std::vector<u8>& rgba, u32 w, u32 h) {
         }
 }
 
+// The image with one more texel on every side that repeats its nearest edge texel ((w + 2) × (h + 2))
+std::vector<u8> extrudeEdges(const std::vector<u8>& rgba, u32 w, u32 h) {
+    const u32 pw = w + 2, ph = h + 2;
+    std::vector<u8> out(static_cast<size_t>(pw) * ph * 4);
+    if (w == 0 || h == 0 || rgba.size() < static_cast<size_t>(w) * h * 4) return out;
+    for (u32 y = 0; y < ph; ++y) {
+        const u32 sy = y == 0 ? 0 : (y > h ? h - 1 : y - 1);
+        for (u32 x = 0; x < pw; ++x) {
+            const u32 sx = x == 0 ? 0 : (x > w ? w - 1 : x - 1);
+            std::memcpy(&out[(static_cast<size_t>(y) * pw + x) * 4], &rgba[(static_cast<size_t>(sy) * w + sx) * 4], 4);
+        }
+    }
+    return out;
+}
+
 // Simple row-based rectangle packing (UI glyphs/images are similar in size)
 struct Shelves {
     struct Shelf {
@@ -317,8 +332,12 @@ ImageInfo Atlas::image(const std::string& assetPath) {
     if (!host.readFile(assetPath, bytes) || !host.decodeImage(bytes, w, h, pixels)) {
         host.log(LogLevel::Warn, "UI: cannot load image assets/" + assetPath);
     } else {
+        // One texel of border around each image repeats its edge texels (as clamp-to-edge would): bilinear filtering at the
+        // quad's edge then reads the image itself, not the transparent black gap between atlas neighbours (a dark line along
+        // edges that end in solid colour, such as a picture cut into bands)
+        const u32 pw = w + 2, ph = h + 2;
         u32 x = 0, y = 0;
-        bool placed = m->imageShelves.place(w, h, x, y);
+        bool placed = m->imageShelves.place(pw, ph, x, y);
         if (!placed && !m->images.empty()) {
             // Full: start the image atlas over (images bound by path, "src {field}", come and go). Images still in use are
             // read again on their next draw; System::render sees rebuilds() change and draws the frame once more.
@@ -326,13 +345,14 @@ ImageInfo Atlas::image(const std::string& assetPath) {
             ++m->rebuilds;
             m->imageShelves.clear();
             m->images.clear();
-            placed = m->imageShelves.place(w, h, x, y);
+            placed = m->imageShelves.place(pw, ph, x, y);
         }
         if (placed) {
             bleedEdges(pixels, w, h);
-            host.uploadAtlas(AtlasKind::Images, x, y, w, h, pixels.data());
-            img.info = {true, w, h, static_cast<f32>(x) / kSize, static_cast<f32>(y) / kSize, static_cast<f32>(x + w) / kSize,
-                        static_cast<f32>(y + h) / kSize};
+            const std::vector<u8> padded = extrudeEdges(pixels, w, h);
+            host.uploadAtlas(AtlasKind::Images, x, y, pw, ph, padded.data());
+            img.info = {true, w, h, static_cast<f32>(x + 1) / kSize, static_cast<f32>(y + 1) / kSize, static_cast<f32>(x + 1 + w) / kSize,
+                        static_cast<f32>(y + 1 + h) / kSize};
         } else {
             host.log(LogLevel::Warn, "UI: image larger than the atlas - assets/" + assetPath + " is not shown");
         }
