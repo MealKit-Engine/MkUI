@@ -37,6 +37,9 @@ u32 lerpColor(u32 a, u32 b, f32 t) {
     return out;
 }
 
+// The widest text outline the glyph atlas holds: its SDF padding (kSdfPadding baked px) less a margin, per em
+constexpr f32 kMaxOutlineEm = static_cast<f32>(kSdfPadding) * 0.9f / kBakePixels;
+
 u32 withAlpha(u32 c, f32 opacity) {
     const f32 a = static_cast<f32>(c >> 24) * std::clamp(opacity, 0.0f, 1.0f);
     return (c & 0x00FFFFFFu) | (static_cast<u32>(std::lround(a)) << 24);
@@ -1159,6 +1162,22 @@ struct System::Impl {
             else if (d.verticalAlign == VerticalAlign::Bottom) y += n.rect.h - sh.height;
         }
         const f32 sdfUnits = atlas.sdfUnitsPerPixel();
+        // Outline: width (logical units, capped by the atlas padding) and colour (none: each glyph's own colour)
+        f32 outline = d.outline;
+        if (!d.outlineField.empty()) {
+            Value ov;
+            if (resolve(s, n, d.outlineField, ov)) outline = static_cast<f32>(std::max(0.0, numberOf(ov)));
+            else missingField(s, d.outlineField);
+        }
+        bool outlineColored = d.hasOutlineColor;
+        u32 outlineColor = d.hasOutlineColor ? theme.color(d.outlineColor, d.outlineColor.rgba) : 0u;
+        if (!d.outlineColorField.empty()) {
+            Value cv;
+            if (resolve(s, n, d.outlineColorField, cv) && cv.size == 4) {
+                std::memcpy(&outlineColor, cv.data, 4);
+                outlineColored = true;
+            }
+        }
         for (const ShapedLine& line : sh.lines) {
             f32 x = n.rect.x;
             // squeeze: a line wider than the box fills it, every x taken toward its start by sx
@@ -1217,6 +1236,10 @@ struct System::Impl {
                     q.color0 = color;
                     q.flags = kQuadGlyph;
                     q.sdfScale = sdfUnits * run.size * k / kBakePixels;
+                    if (outline > 0.0f) { // screen px outside the edge, within the glyph's padded box
+                        q.strokeWidth = std::min(outline, run.size * kMaxOutlineEm) * k;
+                        q.strokeColor = outlineColored ? withAlpha(outlineColor, opacity) : color;
+                    }
                     quads.push_back(q);
                 }
                 if ((run.underline || run.strike) && g.cp != '\n') {

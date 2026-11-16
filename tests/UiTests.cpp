@@ -77,6 +77,15 @@ void testDocument() {
     mkui::Document doc;
     check(mkui::parseDocument(kScreen, "ui/test.ui", doc, host), "parseDocument reads the screen");
     check(doc.nodes.size() == 3, "board + two frames");
+    mkui::Document outlined;
+    const char* text = "@format ui 1\nboard t 100 100\n  text a\n    content hi\n    outline 2 #272727\n  end\n"
+                       "  text b\n    content hi\n    outline 1.5\n    outlineField od\n    outlineColorField oc\n  end\nend\n";
+    check(mkui::parseDocument(text, "ui/outline.ui", outlined, host) && outlined.nodes.size() == 3, "outline parses");
+    if (outlined.nodes.size() == 3) {
+        check(outlined.nodes[1].outline == 2.0f && outlined.nodes[1].hasOutlineColor, "outline width and colour");
+        check(outlined.nodes[2].outline == 1.5f && !outlined.nodes[2].hasOutlineColor && outlined.nodes[2].outlineField == "od" &&
+                  outlined.nodes[2].outlineColorField == "oc", "outline without colour, and its fields");
+    }
 }
 
 void testSourceRoundTrip() {

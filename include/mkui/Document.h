@@ -166,6 +166,11 @@ struct Node {
     bool ellipsis = false;
     u32 maxLines = 0;
     bool squeeze = false; // a line wider than the box is squeezed sideways to fit it (the font size stays; Scratch-like)
+    // Outline outside the glyphs (logical units; at most 0.13 of the font size, the glyph atlas' padding). Without a colour
+    // it takes each glyph's own colour, which makes the text bolder
+    f32 outline = 0.0f;
+    ColorValue outlineColor;
+    bool hasOutlineColor = false;
 
     // Bindings (view model field paths, ! in front inverts)
     std::string visibleField, disabledField, widthRatioField, colorField;
@@ -174,6 +179,7 @@ struct Node {
     std::string opacityField;    // multiplies the node's and its children's opacity by a number field (0..1)
     std::string brightnessField; // image nodes: adds a number field (-1..1) to the brightness
     std::string fontSizeField;   // text nodes: the font size comes from a number field (logical units, > 0)
+    std::string outlineField, outlineColorField; // text nodes: outline width (logical units) and colour from fields
 
     // Image: mirror the picture (flip horizontal / vertical)
     bool flipX = false, flipY = false;

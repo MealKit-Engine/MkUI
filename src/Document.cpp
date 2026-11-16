@@ -406,6 +406,13 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
         if (args == 1 && (t[1] == "ellipsis" || t[1] == "clip")) return n.ellipsis = t[1] == "ellipsis", true;
         return fail("ellipsis|clip");
     }
+    if (k == "outline") {
+        if ((args == 1 || args == 2) && num(1, n.outline) && n.outline >= 0.0f) {
+            if (args == 2) n.hasOutlineColor = parseColor(t[2], n.outlineColor);
+            return args == 1 || n.hasOutlineColor || fail("outline <width> [color]");
+        }
+        return fail("outline <width> [color]");
+    }
     if (k == "squeeze") return args == 0 ? (n.squeeze = true, true) : fail("squeeze (no arguments)");
     if (k == "maxLines") {
         f32 lines = 0;
@@ -440,6 +447,8 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
     if (k == "offsetField") return args == 2 ? (n.offsetXField = t[1], n.offsetYField = t[2], true) : fail("offsetField <x field> <y field>");
     if (k == "opacityField") return args == 1 ? (n.opacityField = t[1], true) : fail("opacityField <field>");
     if (k == "fontSizeField") return args == 1 ? (n.fontSizeField = t[1], true) : fail("fontSizeField <field>");
+    if (k == "outlineField") return args == 1 ? (n.outlineField = t[1], true) : fail("outlineField <field>");
+    if (k == "outlineColorField") return args == 1 ? (n.outlineColorField = t[1], true) : fail("outlineColorField <field>");
     if (k == "brightnessField") return args == 1 ? (n.brightnessField = t[1], true) : fail("brightnessField <field>");
     if (k == "flip") {
         bool ok = args >= 1;
