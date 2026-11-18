@@ -72,9 +72,9 @@ struct Builder {
     Color fillAt(f32 lx, f32 ly) const {
         const Color c0 = unpack(q.color0);
         const u32 kind = q.flags & 0xF;
-        if (kind != kQuadShape) return c0;
         const u32 paint = (q.flags >> 4) & 0x3;
-        if (paint == 0) return c0;
+        const bool imageGradient = kind == kQuadImage && paint == 1; // tint from color0 to strokeColor (gradientField)
+        if ((kind != kQuadShape && !imageGradient) || paint == 0) return c0;
         const f32 bx = (lx + halfW) / std::max(q.rect[2], 1e-3f), by = (ly + halfH) / std::max(q.rect[3], 1e-3f);
         f32 t;
         if (paint == 1) {
@@ -84,7 +84,7 @@ struct Builder {
             const f32 dx = (bx - q.gradient[0]) / std::max(q.gradient[2], 1e-4f), dy = (by - q.gradient[1]) / std::max(q.gradient[3], 1e-4f);
             t = std::sqrt(dx * dx + dy * dy);
         }
-        return lerp(c0, unpack(q.color1), std::clamp(t, 0.0f, 1.0f));
+        return lerp(c0, unpack(imageGradient ? q.strokeColor : q.color1), std::clamp(t, 0.0f, 1.0f));
     }
 
     u32 vertex(f32 lx, f32 ly, u32 color) {

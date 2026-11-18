@@ -54,7 +54,9 @@ struct Quad {
     f32 gradient[4] = {};                     // linear: start xy, end xy / radial: center xy, radius xy (box 0..1 coordinates)
     u32 color0 = 0;                           // sRGB RGBA8 (rgba()), straight alpha
     u32 color1 = 0;
-    u32 strokeColor = 0;   // shapes: border colour; glyphs: outline colour (with strokeWidth: screen px outside the edge)
+    // shapes: border colour; glyphs: outline colour (with strokeWidth: screen px outside the edge); images with kQuadLinear:
+    // the gradient's end colour (the texel is multiplied by color0 → strokeColor along `gradient`; color1 stays brightness)
+    u32 strokeColor = 0;
     u32 flags = 0; // kQuadShape/Image/Glyph/Shadow | kQuadLinear/kQuadRadial
     f32 strokeWidth = 0.0f;
     f32 rotation = 0.0f; // radians, around the box center

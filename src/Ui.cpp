@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <sstream>
 #include <string_view>
 
 namespace mkui {
@@ -43,6 +44,42 @@ constexpr f32 kMaxOutlineEm = static_cast<f32>(kSdfPadding) * 0.9f / kBakePixels
 u32 withAlpha(u32 c, f32 opacity) {
     const f32 a = static_cast<f32>(c >> 24) * std::clamp(opacity, 0.0f, 1.0f);
     return (c & 0x00FFFFFFu) | (static_cast<u32>(std::lround(a)) << 24);
+}
+
+// Component-wise product (colour by colour, alpha by alpha)
+u32 mulColor(u32 a, u32 b) {
+    u32 out = 0;
+    for (int i = 0; i < 4; ++i) out |= ((((a >> (i * 8)) & 0xFF) * ((b >> (i * 8)) & 0xFF) + 127) / 255) << (i * 8);
+    return out;
+}
+
+// An image's gradientField: "<position> <#rrggbb[aa]> ..." sorted by position (tokens that don't parse are skipped)
+struct GradientStop {
+    f32 pos = 0.0f;
+    u32 color = 0xFFFFFFFFu;
+};
+std::vector<GradientStop> parseGradient(const std::string& text) {
+    std::vector<GradientStop> out;
+    std::istringstream in(text);
+    for (std::string pos, colour; in >> pos >> colour;) {
+        char* end = nullptr;
+        const f32 p = std::strtof(pos.c_str(), &end);
+        if (end == pos.c_str() || colour.size() < 7 || colour[0] != '#') continue;
+        const u32 hex = static_cast<u32>(std::strtoul(colour.substr(1, 6).c_str(), nullptr, 16));
+        const u32 alpha = colour.size() >= 9 ? static_cast<u32>(std::strtoul(colour.substr(7, 2).c_str(), nullptr, 16)) : 255u;
+        out.push_back({p, ((hex >> 16) & 0xFF) | (hex & 0xFF00) | ((hex & 0xFF) << 16) | (alpha << 24)});
+    }
+    std::stable_sort(out.begin(), out.end(), [](const GradientStop& a, const GradientStop& b) { return a.pos < b.pos; });
+    return out;
+}
+u32 gradientAt(const std::vector<GradientStop>& g, f32 p) {
+    if (p <= g.front().pos) return g.front().color;
+    for (size_t i = 1; i < g.size(); ++i)
+        if (p <= g[i].pos) {
+            const f32 span = g[i].pos - g[i - 1].pos;
+            return lerpColor(g[i - 1].color, g[i].color, span > 0.0f ? (p - g[i - 1].pos) / span : 1.0f);
+        }
+    return g.back().color;
 }
 
 // ---------------------------------------------------------------- Screens
@@ -1404,7 +1441,35 @@ struct System::Impl {
                         for (int i = 0; i < 4; ++i) q.radii[i] = v.radii[i] * k;
                     quads.push_back(q);
                 };
-                if (!sliced) {
+                std::vector<GradientStop> gradient;
+                if (!d.gradientField.empty()) {
+                    Value gv;
+                    if (resolve(s, n, d.gradientField, gv) && gv.kind == ValueKind::String)
+                        gradient = parseGradient(*static_cast<const std::string*>(gv.data));
+                    else
+                        missingField(s, d.gradientField);
+                }
+                if (!gradient.empty() && !sliced) {
+                    // One piece per stop interval inside the picture, each a linear tint from its left colour to its right one
+                    // (the shader multiplies the texel by color0 → strokeColor for an image quad with kQuadLinear)
+                    std::vector<f32> cuts{0.0f};
+                    for (const GradientStop& g : gradient)
+                        if (g.pos > cuts.back() && g.pos < 1.0f) cuts.push_back(g.pos);
+                    cuts.push_back(1.0f);
+                    const f32 ua = d.flipX ? img.u1 : img.u0, ub = d.flipX ? img.u0 : img.u1;
+                    for (size_t i = 0; i + 1 < cuts.size(); ++i) {
+                        const size_t before = quads.size();
+                        piece(r.x + r.w * cuts[i], r.y, r.x + r.w * cuts[i + 1], r.y + r.h, ua + (ub - ua) * cuts[i], d.flipY ? img.v1 : img.v0,
+                              ua + (ub - ua) * cuts[i + 1], d.flipY ? img.v0 : img.v1);
+                        if (quads.size() == before) continue;
+                        Quad& q = quads.back();
+                        q.flags |= kQuadLinear;
+                        q.gradient[0] = 0.0f, q.gradient[1] = 0.5f, q.gradient[2] = 1.0f, q.gradient[3] = 0.5f;
+                        q.color0 = mulColor(tint, gradientAt(gradient, cuts[i]));
+                        q.strokeColor = mulColor(tint, gradientAt(gradient, cuts[i + 1]));
+                        for (f32& radius : q.radii) radius = 0.0f;
+                    }
+                } else if (!sliced) {
                     piece(r.x, r.y, r.x + r.w, r.y + r.h, d.flipX ? img.u1 : img.u0, d.flipY ? img.v1 : img.v0, d.flipX ? img.u0 : img.u1,
                           d.flipY ? img.v0 : img.v1);
                 } else { // 9-slice: margins are source pixels = logical units

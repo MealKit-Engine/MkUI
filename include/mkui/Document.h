@@ -178,6 +178,11 @@ struct Node {
     std::string offsetXField, offsetYField; // moves the node and its children by two number fields (logical units, after layout)
     std::string opacityField;    // multiplies the node's and its children's opacity by a number field (0..1)
     std::string brightnessField; // image nodes: adds a number field (-1..1) to the brightness
+    // image nodes: a horizontal gradient multiplied into the picture (after tint), from a string field: "<position> <colour>
+    // <position> <colour> ..." with positions as fractions of the drawn picture's width from its left edge (outside 0..1
+    // allowed: the colour at the edge is interpolated) and .ui colours (#rrggbb, #rrggbbaa). Any number of stops; the
+    // picture is drawn as one piece per stop interval. Empty: none. Not with slice
+    std::string gradientField;
     std::string fontSizeField;   // text nodes: the font size comes from a number field (logical units, > 0)
     std::string outlineField, outlineColorField; // text nodes: outline width (logical units) and colour from fields
     // text nodes: every line drawn this much narrower sideways (a number field, 0..1; 1 = as shaped), before `squeeze`

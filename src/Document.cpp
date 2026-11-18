@@ -453,6 +453,7 @@ bool applyProperty(Node& n, const std::string& line, const Theme* theme, std::st
     if (k == "squeezeField") return args == 1 ? (n.squeezeField = t[1], true) : fail("squeezeField <field>");
     if (k == "skewField") return args == 1 ? (n.skewField = t[1], true) : fail("skewField <field>");
     if (k == "brightnessField") return args == 1 ? (n.brightnessField = t[1], true) : fail("brightnessField <field>");
+    if (k == "gradientField") return args == 1 ? (n.gradientField = t[1], true) : fail("gradientField <field>");
     if (k == "flip") {
         bool ok = args >= 1;
         for (size_t i = 1; i < t.size(); ++i) {

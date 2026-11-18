@@ -446,8 +446,49 @@ void testSkew() {
     check(topX > bottomX, "skew: tessellated tops lean right");
 }
 
+// gradientField: one piece per stop interval inside the picture, each tinted from its left stop colour to its right one
+// (color0 → strokeColor with kQuadLinear), the tint multiplied in; stops outside 0..1 give the colour at the edge
+void testImageGradient() {
+    ImageHost host;
+    host.files["ui/band.png"] = "100 10";
+    host.files["ui/gradient.ui"] = "@format ui 1\nboard gradient 1920 1080\n"
+                                   "  image band\n    pos 0 0\n    size hug hug\n    src ui/band.png\n    gradientField g\n  end\n"
+                                   "  image tinted\n    pos 0 100\n    size hug hug\n    src ui/band.png\n    tint #808080\n    gradientField h\n  end\nend\n";
+    mkui::ValueModel vm;
+    vm.set("g", std::string("1 #0000ff 0 #ff0000 0.5 #00ff0080"));  // out of order: sorted by position
+    vm.set("h", std::string("-1 #000000 1 #ffffff"));                // starts outside the picture: half grey at its left edge
+    mkui::System ui(host, mkui::valueBinder());
+    const mkui::ScreenId screen = ui.open("ui/gradient.ui");
+    ui.bind(screen, vm.model());
+    mkui::Viewport viewport{0, 0, 1920, 1080};
+    mkui::FrameInput input;
+    ui.update(input, viewport, 1.0 / 60.0);
+    const std::vector<mkui::Quad> quads = imageQuads(ui.render());
+    check(quads.size() == 3, "gradientField: one piece per stop interval (two for three stops, one for two)");
+    if (quads.size() != 3) return;
+    check(near(quads[0].rect[0], 0.0f) && near(quads[0].rect[2], 50.0f) && near(quads[1].rect[0], 50.0f) && near(quads[1].rect[2], 50.0f),
+          "gradientField: pieces split at the stop positions");
+    check(near(quads[1].uv[0], quads[0].uv[2]) && quads[0].uv[2] > quads[0].uv[0], "gradientField: the picture is split, not repeated");
+    check((quads[0].flags & 0xF) == mkui::kQuadImage && (quads[0].flags & mkui::kQuadLinear) != 0, "gradientField: linear image quads");
+    check(quads[0].color0 == mkui::rgba(255, 0, 0, 255) && quads[0].strokeColor == mkui::rgba(0, 255, 0, 128) &&
+              quads[1].color0 == mkui::rgba(0, 255, 0, 128) && quads[1].strokeColor == mkui::rgba(0, 0, 255, 255),
+          "gradientField: each piece runs between its stops' colours");
+    check(quads[2].color0 == mkui::rgba(64, 64, 64, 255) && quads[2].strokeColor == mkui::rgba(128, 128, 128, 255),
+          "gradientField: edge colours interpolated from stops outside the picture, times the tint");
+    mkui::DrawList list;
+    mkui::tessellate(&quads[0], 1, list);
+    bool redLeft = false, greenRight = false;
+    for (const mkui::DrawVertex& v : list.vertices) {
+        redLeft |= near(v.x, 0.0f) && (v.color & 0xFF) == 255;
+        greenRight |= near(v.x, 50.0f) && ((v.color >> 8) & 0xFF) == 255;
+    }
+    check(redLeft && greenRight, "gradientField: tessellated vertices carry the gradient");
+    check(ui.info(screen).errors.empty(), "gradientField: no binding errors");
+}
+
 int main() {
     testPenpotExpected();
+    testImageGradient();
     testDocument();
     testSourceRoundTrip();
     testSystem();
